@@ -1,0 +1,237 @@
+import BaseRepository from './BaseRepository.js';
+import db from '../db/connection.js';
+import { hasCurrentAccess } from '../services/subscriptionService.js';
+
+function attachPostPremium(post) {
+  post.is_premium = !!(hasCurrentAccess({
+    subscription_status: post.owner_subscription_status,
+    plan_expiry_date: post.owner_plan_expiry_date,
+  }) && post.owner_premium_badge_enabled);
+  return post;
+}
+
+class PostRepository extends BaseRepository {
+  constructor() { super('posts'); }
+
+  async getFeed(page = 1, limit = 10, userId = null) {
+    const offset = (page - 1) * limit;
+    const posts = await db.all(`
+      SELECT p.*, pet.name as pet_name, pet.pet_username, pet.avatar_url as pet_avatar,
+        pet.breed_name, pet.age as pet_age, pet.location_text, pet.type as pet_type, pet.id as author_pet_id,
+        (SELECT COUNT(*) FROM likes WHERE post_id = p.id)::int as like_count,
+        (SELECT COUNT(*) FROM comments WHERE post_id = p.id)::int as comment_count,
+        (SELECT COUNT(*) FROM shares WHERE post_id = p.id)::int as share_count,
+        ${userId ? `(SELECT COUNT(*) FROM likes WHERE post_id = p.id AND user_id = ${userId}) as is_liked,` : '0 as is_liked,'}
+        u.username as owner_username, u.subscription_status as owner_subscription_status,
+        u.premium_badge_enabled as owner_premium_badge_enabled, u.plan_expiry_date as owner_plan_expiry_date
+      FROM posts p
+      JOIN pets pet ON p.pet_id = pet.id
+      JOIN users u ON pet.user_id = u.id
+      WHERE p.is_flagged = 0
+      ORDER BY p.created_at DESC
+      LIMIT ? OFFSET ?
+    `, [limit, offset]);
+    posts.forEach(attachPostPremium);
+    const totalRow = await db.get('SELECT COUNT(*) as count FROM posts WHERE is_flagged = 0');
+    const total = Number(totalRow.count);
+    return { posts, hasMore: offset + limit < total, total };
+  }
+
+  async findById(postId, userId = null) {
+    const post = await db.get(`
+      SELECT p.*, pet.name as pet_name, pet.pet_username, pet.avatar_url as pet_avatar,
+        pet.breed_name, pet.age as pet_age, pet.location_text, pet.type as pet_type, pet.id as author_pet_id,
+        (SELECT COUNT(*) FROM likes WHERE post_id = p.id)::int as like_count,
+        (SELECT COUNT(*) FROM comments WHERE post_id = p.id)::int as comment_count,
+        (SELECT COUNT(*) FROM shares WHERE post_id = p.id)::int as share_count,
+        ${userId ? `(SELECT COUNT(*) FROM likes WHERE post_id = p.id AND user_id = ${userId}) as is_liked,` : '0 as is_liked,'}
+        u.username as owner_username, u.subscription_status as owner_subscription_status,
+        u.premium_badge_enabled as owner_premium_badge_enabled, u.plan_expiry_date as owner_plan_expiry_date
+      FROM posts p
+      JOIN pets pet ON p.pet_id = pet.id
+      JOIN users u ON pet.user_id = u.id
+      WHERE p.id = ?
+    `, [postId]);
+    return post ? attachPostPremium(post) : post;
+  }
+
+  async getNewPosts(afterTimestamp, userId = null) {
+    const posts = await db.all(`
+      SELECT p.*, pet.name as pet_name, pet.pet_username, pet.avatar_url as pet_avatar,
+        pet.breed_name, pet.age as pet_age, pet.location_text, pet.type as pet_type, pet.id as author_pet_id,
+        (SELECT COUNT(*) FROM likes WHERE post_id = p.id)::int as like_count,
+        (SELECT COUNT(*) FROM comments WHERE post_id = p.id)::int as comment_count,
+        (SELECT COUNT(*) FROM shares WHERE post_id = p.id)::int as share_count,
+        ${userId ? `(SELECT COUNT(*) FROM likes WHERE post_id = p.id AND user_id = ${userId}) as is_liked,` : '0 as is_liked,'}
+        u.username as owner_username, u.subscription_status as owner_subscription_status,
+        u.premium_badge_enabled as owner_premium_badge_enabled, u.plan_expiry_date as owner_plan_expiry_date
+      FROM posts p
+      JOIN pets pet ON p.pet_id = pet.id
+      JOIN users u ON pet.user_id = u.id
+      WHERE p.is_flagged = 0 AND p.created_at > ?
+      ORDER BY p.created_at DESC
+    `, [afterTimestamp]);
+    posts.forEach(attachPostPremium);
+    return { posts };
+  }
+
+  async getByPetId(petId, page = 1, limit = 20) {
+    const offset = (page - 1) * limit;
+    return db.all(`
+      SELECT p.*,
+      (SELECT COUNT(*) FROM likes WHERE post_id = p.id)::int as like_count,
+      (SELECT COUNT(*) FROM comments WHERE post_id = p.id)::int as comment_count,
+      (SELECT COUNT(*) FROM shares WHERE post_id = p.id)::int as share_count
+      FROM posts p WHERE p.pet_id = ? AND p.is_flagged = 0 ORDER BY p.created_at DESC LIMIT ? OFFSET ?
+    `, [petId, limit, offset]);
+  }
+
+  async toggleLike(postId, userId) {
+    const existing = await db.get('SELECT id FROM likes WHERE post_id = ? AND user_id = ?', [postId, userId]);
+    if (existing) {
+      await db.run('DELETE FROM likes WHERE post_id = ? AND user_id = ?', [postId, userId]);
+      return { liked: false };
+    }
+    await db.run('INSERT INTO likes (post_id, user_id) VALUES (?, ?)', [postId, userId]);
+    return { liked: true };
+  }
+
+  async getLikeCount(postId) {
+    const row = await db.get('SELECT COUNT(*) as count FROM likes WHERE post_id = ?', [postId]);
+    return Number(row.count);
+  }
+
+  // Returns a flat list (top-level comments and replies interleaved by
+  // created_at) rather than a nested tree. Each row's `parent_comment_id`
+  // is enough for the client to group replies under their parent -- this
+  // matches how the rest of the repo works (flat rows + simple JOINs,
+  // no server-built nested structures) and keeps pagination trivial since
+  // replies are just more rows, not a second query per parent.
+  async getComments(postId, page = 1, limit = 20) {
+    const offset = (page - 1) * limit;
+    const comments = await db.all(`
+      SELECT c.*, u.username, u.full_name, u.subscription_status, u.premium_badge_enabled, u.plan_expiry_date,
+        (COALESCE((SELECT avatar_url FROM pets WHERE id = u.active_pet_id), (SELECT avatar_url FROM pets WHERE user_id = u.id ORDER BY id ASC LIMIT 1))) as avatar_url
+      FROM comments c JOIN users u ON c.user_id = u.id
+      WHERE c.post_id = ? ORDER BY c.created_at ASC LIMIT ? OFFSET ?
+    `, [postId, limit, offset]);
+    comments.forEach(c => { c.is_premium = !!(hasCurrentAccess(c) && c.premium_badge_enabled); });
+    return comments;
+  }
+
+  async addComment(postId, userId, content, parentCommentId = null) {
+    // Threads are flattened to one level (like Instagram): replying to a
+    // reply still attaches to that reply's top-level ancestor, so a
+    // thread never nests more than one level deep. The client already
+    // does this when it sends parentCommentId, but resolve it here too
+    // so the invariant holds even if a client ever sends a reply's id.
+    let resolvedParentId = parentCommentId;
+    if (resolvedParentId) {
+      const parent = await db.get('SELECT id, parent_comment_id FROM comments WHERE id = ?', [resolvedParentId]);
+      if (!parent) {
+        resolvedParentId = null;
+      } else if (parent.parent_comment_id) {
+        resolvedParentId = parent.parent_comment_id;
+      }
+    }
+
+    const result = await db.run(
+      'INSERT INTO comments (post_id, user_id, content, parent_comment_id) VALUES (?, ?, ?, ?) RETURNING id',
+      [postId, userId, content, resolvedParentId]
+    );
+    const newId = result.rows[0].id;
+    const comment = await db.get(
+      'SELECT c.*, u.username, u.full_name, u.subscription_status, u.premium_badge_enabled, u.plan_expiry_date FROM comments c JOIN users u ON c.user_id = u.id WHERE c.id = ?',
+      [newId]
+    );
+    comment.is_premium = !!(hasCurrentAccess(comment) && comment.premium_badge_enabled);
+    return comment;
+  }
+
+  async sharePost(postId, userId) {
+    await db.run('INSERT INTO shares (post_id, user_id) VALUES (?, ?)', [postId, userId]);
+    const row = await db.get('SELECT COUNT(*) as count FROM shares WHERE post_id = ?', [postId]);
+    return Number(row.count);
+  }
+
+  async reportPost(postId, userId, reason) {
+    const existing = await db.get('SELECT id FROM post_reports WHERE post_id = ? AND user_id = ?', [postId, userId]);
+    if (!existing) {
+      await db.run('INSERT INTO post_reports (post_id, user_id, reason) VALUES (?, ?, ?)', [postId, userId, reason]);
+      await db.run('UPDATE posts SET reported_count = reported_count + 1 WHERE id = ?', [postId]);
+
+      const row = await db.get('SELECT reported_count FROM posts WHERE id = ?', [postId]);
+      const count = row.reported_count;
+      if (count >= 5) {
+        await db.run("UPDATE posts SET is_flagged = 1, moderation_status = 'flagged' WHERE id = ?", [postId]);
+      }
+    }
+    return true;
+  }
+
+  async toggleReaction(postId, userId, reaction) {
+    const existing = await db.get('SELECT id, reaction FROM reactions WHERE post_id = ? AND user_id = ?', [postId, userId]);
+    if (existing) {
+      if (existing.reaction === reaction) {
+        await db.run('DELETE FROM reactions WHERE post_id = ? AND user_id = ?', [postId, userId]);
+        return { removed: true, reaction };
+      } else {
+        await db.run('UPDATE reactions SET reaction = ? WHERE post_id = ? AND user_id = ?', [reaction, postId, userId]);
+        return { updated: true, reaction };
+      }
+    }
+    await db.run('INSERT INTO reactions (post_id, user_id, reaction) VALUES (?, ?, ?)', [postId, userId, reaction]);
+    return { added: true, reaction };
+  }
+
+  async getReactionCounts(postId) {
+    return db.all('SELECT reaction, COUNT(*) as count FROM reactions WHERE post_id = ? GROUP BY reaction', [postId]);
+  }
+
+  async getPostReactions(postId) {
+    const rows = await db.all('SELECT reaction, COUNT(*) as count FROM reactions WHERE post_id = ? GROUP BY reaction', [postId]);
+    const result = {};
+    rows.forEach(r => { result[r.reaction] = Number(r.count); });
+    return result;
+  }
+
+  async getUserReaction(postId, userId) {
+    const row = await db.get('SELECT reaction FROM reactions WHERE post_id = ? AND user_id = ?', [postId, userId]);
+    return row ? row.reaction : null;
+  }
+
+  async getReactionUsers(postId) {
+    return db.all(`
+      SELECT r.reaction, r.user_id, p.name as pet_name, p.avatar_url as pet_avatar, p.pet_username
+      FROM reactions r
+      JOIN pets p ON r.user_id = p.user_id
+      WHERE r.post_id = ?
+    `, [postId]);
+  }
+
+  // Update a post's caption. Ownership is verified by the calling route
+  // BEFORE this is called -- this method itself just performs the update.
+  async updateCaption(postId, caption) {
+    await db.run('UPDATE posts SET caption = ? WHERE id = ?', [caption, postId]);
+    return this.findById(postId);
+  }
+
+  async deletePost(postId, userId) {
+    const post = await db.get('SELECT * FROM posts WHERE id = ?', [postId]);
+    if (!post) return null;
+
+    const pet = await db.get('SELECT * FROM pets WHERE id = ? AND user_id = ?', [post.pet_id, userId]);
+    if (!pet) return { forbidden: true };
+
+    await db.run('DELETE FROM likes WHERE post_id = ?', [postId]);
+    await db.run('DELETE FROM comments WHERE post_id = ?', [postId]);
+    await db.run('DELETE FROM reactions WHERE post_id = ?', [postId]);
+    await db.run('DELETE FROM shares WHERE post_id = ?', [postId]);
+    await db.run('DELETE FROM post_reports WHERE post_id = ?', [postId]);
+    await db.run('DELETE FROM posts WHERE id = ?', [postId]);
+
+    return { success: true, pet_id: post.pet_id };
+  }
+}
+
+export default new PostRepository();

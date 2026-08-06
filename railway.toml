@@ -1,0 +1,9 @@
+# Railway deployment config
+# Root Directory must be set to "server" in Railway Settings UI
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "node index.js"
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 5
