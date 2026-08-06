@@ -5,7 +5,7 @@ import { rateLimiter } from '../middleware/rateLimiter.js';
 import PostRepo from '../models/PostRepository.js';
 import PetRepo from '../models/PetRepository.js';
 import SpotlightRepo from '../models/SpotlightRepository.js';
-import storage from '../storage/LocalStorage.js';
+import storage from '../storage/index.js';
 import config from '../config.js';
 import db from '../db/connection.js';
 import { sendRealtimeNotification } from '../socket/notifications.js';

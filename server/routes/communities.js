@@ -4,7 +4,7 @@ import CommunityRepo from '../models/CommunityRepository.js';
 import PetRepo from '../models/PetRepository.js';
 import { authenticateAccess } from '../middleware/auth.js';
 import { rateLimiter } from '../middleware/rateLimiter.js';
-import storage from '../storage/LocalStorage.js';
+import storage from '../storage/index.js';
 import config from '../config.js';
 import db from '../db/connection.js';
 import { sendRealtimeNotification } from '../socket/notifications.js';

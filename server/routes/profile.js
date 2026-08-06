@@ -6,7 +6,7 @@ import PetRepo from '../models/PetRepository.js';
 import PostRepo from '../models/PostRepository.js';
 import UserRepo from '../models/UserRepository.js';
 import ProfileViewRepo from '../models/ProfileViewRepository.js';
-import storage from '../storage/LocalStorage.js';
+import storage from '../storage/index.js';
 import config from '../config.js';
 import SpotlightRepo from '../models/SpotlightRepository.js';
 import db from '../db/connection.js';
