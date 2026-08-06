@@ -34,20 +34,35 @@ async function start() {
   startCleanupJobs();
 
   const app = express();
-  // Deployed behind Railway's edge proxy -- without this, req.ip resolves
-  // to the proxy's address for every request, collapsing the IP-keyed rate
-  // limiter into one shared bucket for the entire platform instead of one
-  // per real visitor. See AUDIT_REPORT.md.
+
+  // Behind Render's proxy
   app.set('trust proxy', 1);
+
   const server = createServer(app);
+
   const io = new Server(server, {
-    cors: { origin: config.CORS_ORIGINS, methods: ['GET', 'POST'] }
+    cors: {
+      origin: config.CORS_ORIGINS,
+      methods: ['GET', 'POST']
+    }
   });
 
   // Middleware
   app.set('io', io);
-  app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
-  app.use(cors({ origin: config.CORS_ORIGINS, credentials: true }));
+
+  app.use(
+    helmet({
+      crossOriginResourcePolicy: { policy: 'cross-origin' }
+    })
+  );
+
+  app.use(
+    cors({
+      origin: config.CORS_ORIGINS,
+      credentials: true
+    })
+  );
+
   app.use(express.json());
 
   // Static files
@@ -65,10 +80,24 @@ async function start() {
   app.use('/api/notifications', notificationRoutes);
   app.use('/api/premium', premiumRoutes);
 
-  // Health check
-  app.get('/api/health', (req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
+  // Root route
+  app.get('/', (req, res) => {
+    res.json({
+      status: 'online',
+      app: 'Sniffr API',
+      version: '1.0.0'
+    });
+  });
 
-  // Socket.IO auth
+  // Health check
+  app.get('/api/health', (req, res) => {
+    res.json({
+      status: 'ok',
+      time: new Date().toISOString()
+    });
+  });
+
+  // Socket.IO authentication
   io.use(authenticateSocket);
 
   // Socket handlers
@@ -78,7 +107,7 @@ async function start() {
   setupCommunitySocket(io);
   setupMeetSocket(io);
 
-  // Graceful shutdown (Postgres pool closes its own connections automatically)
+  // Graceful shutdown
   process.on('SIGINT', () => process.exit());
   process.on('SIGTERM', () => process.exit());
 
