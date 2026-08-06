@@ -11,9 +11,9 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/api':       { target: 'http://localhost:3001', changeOrigin: true },
-      '/uploads':   { target: 'http://localhost:3001', changeOrigin: true },
-      '/socket.io': { target: 'http://localhost:3001', ws: true },
+      '/api':       { target: 'https://sniffrweb.onrender.com', changeOrigin: true },
+      '/uploads':   { target: 'https://sniffrweb.onrender.com', changeOrigin: true },
+      '/socket.io': { target: 'https://sniffrweb.onrender.com', ws: true },
     }
   }
 });

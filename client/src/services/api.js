@@ -1,4 +1,7 @@
-const BASE_URL = `${window.location.origin}/api`;
+// VITE_API_URL unset (dev): falls back to same-origin '/api', proxied by Vite to the backend (see vite.config.js).
+// VITE_API_URL set (Vercel prod build / Capacitor APK): talks to the deployed backend directly, bypassing the dev-only proxy.
+const API_ORIGIN = import.meta.env.VITE_API_URL || window.location.origin;
+const BASE_URL = `${API_ORIGIN}/api`;
 
 let accessToken = null;
 let refreshPromise = null;
