@@ -12,6 +12,7 @@ import SettingsPanel from '../components/SettingsPanel';
 import GalleryViewerModal from '../components/GalleryViewerModal';
 import PremiumBadge from '../components/PremiumBadge';
 import usePullToRefresh from '../hooks/usePullToRefresh';
+import Portal from '../components/Portal';
 
 export function ChampionCrown({ className = "w-8 h-8" }) {
   return (
@@ -591,6 +592,7 @@ export default function ProfilePage() {
       )}
 
       {showShareCard && (
+        <Portal>
         <div
           className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in"
           onClick={() => setShowShareCard(false)}
@@ -667,12 +669,15 @@ export default function ProfilePage() {
             </div>
           </div>
         </div>
+        </Portal>
       )}
 
       {toast && (
+        <Portal>
         <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[250] bg-white shadow-2xl rounded-[2rem] px-6 py-4 border border-primary/10 animate-fade-in">
           <p className="text-xs font-bold text-on-surface leading-snug">{toast}</p>
         </div>
+        </Portal>
       )}
 
       <div className="fixed bottom-32 lg:bottom-8 -left-8 opacity-[0.03] text-primary rotate-12 pointer-events-none">
@@ -865,6 +870,7 @@ function EditProfileModal({ pet, initialFocusField, onClose, onSaved }) {
   };
 
   return (
+    <Portal>
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[100] flex items-center justify-center p-4 overflow-y-auto selection:bg-primary-container selection:text-on-primary-container" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="bg-white p-6 sm:p-8 rounded-[2.5rem] max-w-md w-full shadow-2xl relative overflow-y-auto max-h-[90vh] border border-outline-variant/10 animate-scale-up">
         <div className="flex justify-between items-center mb-6">
@@ -1043,5 +1049,6 @@ function EditProfileModal({ pet, initialFocusField, onClose, onSaved }) {
         </form>
       </div>
     </div>
+    </Portal>
   );
 }

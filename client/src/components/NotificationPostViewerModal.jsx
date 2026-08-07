@@ -295,8 +295,18 @@ export default function NotificationPostViewerModal({ postId, autoOpenComments =
         </div>
       )}
 
-      {/* Main Content Area */}
-      <div className="flex-1 overflow-y-auto p-4 sm:p-6 max-w-xl mx-auto w-full no-scrollbar flex flex-col justify-center">
+      {/* Main Content Area -- this outer element is the ONLY scroll owner
+          (plain overflow-y-auto, no flex/justify-content on it). Centering
+          for short content lives on the INNER wrapper below instead, which
+          is never itself the overflow container -- so when the post is
+          taller than the viewport, the inner wrapper simply grows to fit it
+          and the outer element scrolls it with plain, unambiguous block-level
+          overflow. Combining overflow:auto with justify-content:center on
+          the SAME element (the previous layout) is a well-known flexbox
+          defect where content taller than the container can't be fully
+          scrolled into view -- keep these two concerns on separate elements. */}
+      <div className="flex-1 overflow-y-auto no-scrollbar">
+      <div className="min-h-full flex flex-col justify-center p-4 sm:p-6 max-w-xl mx-auto w-full">
         {loading ? (
           <div className="flex flex-col items-center justify-center py-20 space-y-3">
             <div className="w-10 h-10 border-3 border-primary border-t-transparent rounded-full animate-spin" />
@@ -311,7 +321,7 @@ export default function NotificationPostViewerModal({ postId, autoOpenComments =
             <p className="text-xs text-zinc-400">This memory may have been removed by its owner.</p>
           </div>
         ) : (
-          <article className="relative bg-white dark:bg-zinc-900 rounded-[2.5rem] overflow-hidden shadow-2xl border border-zinc-100 dark:border-zinc-800 text-left my-auto">
+          <article className="relative bg-white dark:bg-zinc-900 rounded-[2.5rem] overflow-hidden shadow-2xl border border-zinc-100 dark:border-zinc-800 text-left">
             {/* Peek Pet Animation Behind Sliding Card */}
             {swipeDistance > 0 && (
               <div
@@ -511,6 +521,7 @@ export default function NotificationPostViewerModal({ postId, autoOpenComments =
             </div>
           </article>
         )}
+      </div>
       </div>
 
       {/* Sub-modals */}

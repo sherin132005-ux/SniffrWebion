@@ -1,4 +1,5 @@
 import { useNavigate } from 'react-router-dom';
+import Portal from './Portal';
 
 const QUICK_PLANS = [
   { key: 'plus', label: 'Plus', price: 123 },
@@ -18,14 +19,15 @@ export default function UpsellModal({ title = 'Premium Feature', message, onClos
   };
 
   return (
+    <Portal>
     <div
-      className="fixed inset-0 z-[400] flex items-end lg:items-center justify-center"
+      className="fixed inset-0 z-[400] flex items-end lg:items-center justify-center pb-[env(safe-area-inset-bottom)]"
       style={{ background: 'rgba(0,0,0,0.55)' }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div
-        className="bg-white dark:bg-zinc-900 w-full max-w-sm rounded-t-[2.5rem] lg:rounded-[2.5rem] shadow-2xl overflow-hidden"
-        style={{ animation: 'slideUpModal 0.35s cubic-bezier(0.32,0.72,0,1) both' }}
+        className="bg-white dark:bg-zinc-900 w-full max-w-sm rounded-t-[2.5rem] lg:rounded-[2.5rem] shadow-2xl overflow-y-auto max-h-[90dvh]"
+        style={{ animation: 'slideUpModal 0.35s cubic-bezier(0.32,0.72,0,1)' }}
         onClick={(e) => e.stopPropagation()}
       >
         <style>{`
@@ -78,5 +80,6 @@ export default function UpsellModal({ title = 'Premium Feature', message, onClos
         </div>
       </div>
     </div>
+    </Portal>
   );
 }

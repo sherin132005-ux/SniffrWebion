@@ -1,5 +1,6 @@
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import Portal from './Portal';
 
 export default function SwitchPetModal({ isOpen, onClose }) {
   const { pet: activePet, allPets, switchPet } = useAuth();
@@ -28,12 +29,13 @@ export default function SwitchPetModal({ isOpen, onClose }) {
   const primaryPetId = allPets?.[0]?.id;
 
   return (
+    <Portal>
     <div
-      className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-end justify-center sm:items-center p-0 sm:p-4 select-none animate-fade-in"
+      className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-end justify-center sm:items-center pt-0 px-0 pb-[env(safe-area-inset-bottom)] sm:p-4 select-none animate-fade-in"
       onClick={onClose}
     >
       <div
-        className="bg-white dark:bg-zinc-900 border border-outline-variant/10 w-full max-w-sm sm:max-w-md rounded-t-[2.5rem] sm:rounded-[2.5rem] p-6 shadow-2xl space-y-5 animate-slide-up text-left max-h-[85vh] overflow-y-auto no-scrollbar"
+        className="bg-white dark:bg-zinc-900 border border-outline-variant/10 w-full max-w-sm sm:max-w-md rounded-t-[2.5rem] sm:rounded-[2.5rem] p-6 shadow-2xl space-y-5 animate-slide-up text-left max-h-[85dvh] overflow-y-auto no-scrollbar"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
@@ -139,5 +141,6 @@ export default function SwitchPetModal({ isOpen, onClose }) {
         </div>
       </div>
     </div>
+    </Portal>
   );
 }

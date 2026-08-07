@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
+import Portal from '../components/Portal';
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
 const APPLE_SERVICE_ID = import.meta.env.VITE_APPLE_SERVICE_ID || '';
@@ -565,6 +566,7 @@ export default function AuthPage() {
       </main>
       <div className="fixed bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-background to-transparent pointer-events-none z-20"/>
 
+      <Portal>
       {/* Forgot Password Modal */}
       {showForgotModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-md transition-all p-4">
@@ -741,6 +743,7 @@ export default function AuthPage() {
           </div>
         </div>
       )}
+      </Portal>
     </div>
   );
 }

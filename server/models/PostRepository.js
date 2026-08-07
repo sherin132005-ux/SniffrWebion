@@ -21,6 +21,15 @@ class PostRepository extends BaseRepository {
         (SELECT COUNT(*) FROM likes WHERE post_id = p.id)::int as like_count,
         (SELECT COUNT(*) FROM comments WHERE post_id = p.id)::int as comment_count,
         (SELECT COUNT(*) FROM shares WHERE post_id = p.id)::int as share_count,
+        (
+          SELECT COALESCE(json_object_agg(r.reaction, r.cnt), '{}'::json)
+          FROM (
+            SELECT reaction, COUNT(*)::int as cnt
+            FROM reactions
+            WHERE post_id = p.id
+            GROUP BY reaction
+          ) r
+        ) as reactions,
         ${userId ? `(SELECT COUNT(*) FROM likes WHERE post_id = p.id AND user_id = ${userId}) as is_liked,` : '0 as is_liked,'}
         u.username as owner_username, u.subscription_status as owner_subscription_status,
         u.premium_badge_enabled as owner_premium_badge_enabled, u.plan_expiry_date as owner_plan_expiry_date
@@ -44,6 +53,15 @@ class PostRepository extends BaseRepository {
         (SELECT COUNT(*) FROM likes WHERE post_id = p.id)::int as like_count,
         (SELECT COUNT(*) FROM comments WHERE post_id = p.id)::int as comment_count,
         (SELECT COUNT(*) FROM shares WHERE post_id = p.id)::int as share_count,
+        (
+          SELECT COALESCE(json_object_agg(r.reaction, r.cnt), '{}'::json)
+          FROM (
+            SELECT reaction, COUNT(*)::int as cnt
+            FROM reactions
+            WHERE post_id = p.id
+            GROUP BY reaction
+          ) r
+        ) as reactions,
         ${userId ? `(SELECT COUNT(*) FROM likes WHERE post_id = p.id AND user_id = ${userId}) as is_liked,` : '0 as is_liked,'}
         u.username as owner_username, u.subscription_status as owner_subscription_status,
         u.premium_badge_enabled as owner_premium_badge_enabled, u.plan_expiry_date as owner_plan_expiry_date
@@ -62,6 +80,15 @@ class PostRepository extends BaseRepository {
         (SELECT COUNT(*) FROM likes WHERE post_id = p.id)::int as like_count,
         (SELECT COUNT(*) FROM comments WHERE post_id = p.id)::int as comment_count,
         (SELECT COUNT(*) FROM shares WHERE post_id = p.id)::int as share_count,
+        (
+          SELECT COALESCE(json_object_agg(r.reaction, r.cnt), '{}'::json)
+          FROM (
+            SELECT reaction, COUNT(*)::int as cnt
+            FROM reactions
+            WHERE post_id = p.id
+            GROUP BY reaction
+          ) r
+        ) as reactions,
         ${userId ? `(SELECT COUNT(*) FROM likes WHERE post_id = p.id AND user_id = ${userId}) as is_liked,` : '0 as is_liked,'}
         u.username as owner_username, u.subscription_status as owner_subscription_status,
         u.premium_badge_enabled as owner_premium_badge_enabled, u.plan_expiry_date as owner_plan_expiry_date

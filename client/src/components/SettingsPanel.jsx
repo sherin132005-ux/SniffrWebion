@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import SettingsModals from './settings/SettingsModals';
+import Portal from './Portal';
 
 export default function SettingsPanel({ isOpen, onClose, onOpenSwitchPet, initialModal }) {
   const { user, pet, allPets, logout } = useAuth();
@@ -85,6 +86,7 @@ export default function SettingsPanel({ isOpen, onClose, onOpenSwitchPet, initia
   };
 
   return (
+    <Portal>
     <div className="fixed inset-0 z-[200] select-none">
       {/* Backdrop */}
       <div
@@ -572,5 +574,6 @@ export default function SettingsPanel({ isOpen, onClose, onOpenSwitchPet, initia
         </div>
       )}
     </div>
+    </Portal>
   );
 }

@@ -115,6 +115,7 @@ export default function ShareSheetModal({ post, onClose }) {
         backdropFilter: 'blur(8px)',
         WebkitBackdropFilter: 'blur(8px)',
         padding: '16px',
+        paddingBottom: 'calc(16px + env(safe-area-inset-bottom))',
       }}
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
@@ -125,8 +126,8 @@ export default function ShareSheetModal({ post, onClose }) {
           backgroundColor: '#ffffff',
           width: '100%',
           maxWidth: '28rem',
-          maxHeight: '80vh',
-          minHeight: '40vh',
+          maxHeight: '80dvh',
+          minHeight: '40dvh',
           borderRadius: '2.5rem',
           boxShadow: '0 -8px 40px rgba(0,0,0,0.15)',
           display: 'flex',

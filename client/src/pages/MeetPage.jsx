@@ -8,6 +8,7 @@ import PremiumBadge from '../components/PremiumBadge';
 import AdSlot from '../components/AdSlot';
 import { isPremiumGateError } from '../utils/premiumErrors';
 import { usePremium } from '../context/PremiumContext';
+import Portal from '../components/Portal';
 
 // Haversine formula to compute distance (approximate)
 function haversine(lat1, lon1, lat2, lon2) {
@@ -1316,6 +1317,7 @@ export default function MeetPage() {
             </section>
           </div>
 
+          <Portal>
           {/* ── Match Celebration Modal ───────────────────── */}
           {showMatchCelebration && matchedPetData && (
             <div className="fixed inset-0 z-[200] bg-black/50 backdrop-blur-md flex items-center justify-center p-6 animate-fade-in">
@@ -1364,17 +1366,19 @@ export default function MeetPage() {
               </div>
             </div>
           )}
+          </Portal>
         </div>
       </main>
 
+      <Portal>
       {/* Nearby Preferences Bottom Sheet */}
       {showPreferences && (
         <div
-          className="fixed inset-0 z-[160] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-4 animate-fade-in"
+          className="fixed inset-0 z-[160] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center pt-4 px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:p-4 animate-fade-in"
           onClick={() => setShowPreferences(false)}
         >
           <div
-            className="bg-white rounded-t-[2.5rem] sm:rounded-[2.5rem] w-full max-w-sm p-6 pb-8 space-y-6 animate-scale-up shadow-2xl relative border border-outline-variant/10 text-left"
+            className="bg-white rounded-t-[2.5rem] sm:rounded-[2.5rem] w-full max-w-sm p-6 pb-8 space-y-6 animate-scale-up shadow-2xl relative border border-outline-variant/10 text-left max-h-[90dvh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex justify-between items-center pb-2 border-b border-zinc-100">
@@ -1433,6 +1437,7 @@ export default function MeetPage() {
           </div>
         </div>
       )}
+      </Portal>
 
       {upsell && (
         <UpsellModal title={upsell.title} message={upsell.message} onClose={() => setUpsell(null)} />

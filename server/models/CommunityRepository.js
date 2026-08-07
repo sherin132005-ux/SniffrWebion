@@ -218,12 +218,31 @@ class CommunityRepository extends BaseRepository {
       clearedAt = mem?.cleared_at || null;
     }
 
+    const selectCols = `
+      cm.*, u.username, u.full_name, p.name as pet_name, p.avatar_url as sender_avatar,
+      reply.content as reply_content,
+      reply.sender_id as reply_sender_id,
+      reply.message_type as reply_message_type,
+      (SELECT username FROM users WHERE id = reply.sender_id) as reply_sender_username,
+      (
+        SELECT COALESCE(json_object_agg(r.reaction, r.cnt), '{}'::json)
+        FROM (
+          SELECT reaction, COUNT(*)::int as cnt
+          FROM community_message_reactions
+          WHERE community_message_id = cm.id
+          GROUP BY reaction
+        ) r
+      ) as reactions
+    `;
+    const joins = `
+      JOIN users u ON cm.sender_id = u.id
+      LEFT JOIN pets p ON u.id = p.user_id
+      LEFT JOIN community_messages reply ON cm.reply_to_id = reply.id
+    `;
+
     if (clearedAt) {
       return db.all(
-        `SELECT cm.*, u.username, u.full_name, p.name as pet_name, p.avatar_url as sender_avatar
-         FROM community_messages cm
-         JOIN users u ON cm.sender_id = u.id
-         LEFT JOIN pets p ON u.id = p.user_id
+        `SELECT ${selectCols} FROM community_messages cm ${joins}
          WHERE cm.community_id = ? AND cm.created_at > ?
          ORDER BY cm.created_at ASC
          LIMIT ?`,
@@ -232,14 +251,26 @@ class CommunityRepository extends BaseRepository {
     }
 
     return db.all(
-      `SELECT cm.*, u.username, u.full_name, p.name as pet_name, p.avatar_url as sender_avatar
-       FROM community_messages cm
-       JOIN users u ON cm.sender_id = u.id
-       LEFT JOIN pets p ON u.id = p.user_id
+      `SELECT ${selectCols} FROM community_messages cm ${joins}
        WHERE cm.community_id = ?
        ORDER BY cm.created_at ASC
        LIMIT ?`,
       [communityId, limit]
+    );
+  }
+
+  async fetchBackMessage(messageId, userId) {
+    const msg = await db.get('SELECT * FROM community_messages WHERE id = ?', [messageId]);
+    if (!msg || msg.sender_id !== userId) return null;
+
+    await db.run("UPDATE community_messages SET content = '🐾 This message was fetched back.', message_type = 'system', media_url = NULL WHERE id = ?", [messageId]);
+    return db.get(
+      `SELECT cm.*, u.username, u.full_name, p.name as pet_name, p.avatar_url as sender_avatar
+       FROM community_messages cm
+       JOIN users u ON cm.sender_id = u.id
+       LEFT JOIN pets p ON u.id = p.user_id
+       WHERE cm.id = ?`,
+      [messageId]
     );
   }
 
@@ -328,18 +359,23 @@ class CommunityRepository extends BaseRepository {
     return { success: true };
   }
 
-  async addMessage({ community_id, sender_id, content, media_url = null, message_type = 'text' }) {
+  async addMessage({ community_id, sender_id, content, media_url = null, message_type = 'text', reply_to_id = null }) {
     const result = await db.run(
-      'INSERT INTO community_messages (community_id, sender_id, content, media_url, message_type) VALUES (?, ?, ?, ?, ?) RETURNING id',
-      [community_id, sender_id, content, media_url, message_type]
+      'INSERT INTO community_messages (community_id, sender_id, content, media_url, message_type, reply_to_id) VALUES (?, ?, ?, ?, ?, ?) RETURNING id',
+      [community_id, sender_id, content, media_url, message_type, reply_to_id]
     );
     await db.run('UPDATE community_members SET is_hidden = 0 WHERE community_id = ?', [community_id]);
 
     return db.get(
-      `SELECT cm.*, u.username, u.full_name, p.name as pet_name, p.avatar_url as sender_avatar
+      `SELECT cm.*, u.username, u.full_name, p.name as pet_name, p.avatar_url as sender_avatar,
+        reply.content as reply_content,
+        reply.sender_id as reply_sender_id,
+        reply.message_type as reply_message_type,
+        (SELECT username FROM users WHERE id = reply.sender_id) as reply_sender_username
        FROM community_messages cm
        JOIN users u ON cm.sender_id = u.id
        LEFT JOIN pets p ON u.id = p.user_id
+       LEFT JOIN community_messages reply ON cm.reply_to_id = reply.id
        WHERE cm.id = ?`,
       [result.rows[0].id]
     );

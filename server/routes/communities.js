@@ -411,7 +411,7 @@ router.post('/:id/messages', rateLimiter(config.RATE_LIMIT.POST), upload.single(
       return res.status(roleCheck.status).json({ error: roleCheck.error, message: roleCheck.message });
     }
 
-    const { content } = req.body;
+    const { content, reply_to_id } = req.body;
     let media_url = req.body.media_url || null;
 
     if (req.file) {
@@ -429,7 +429,8 @@ router.post('/:id/messages', rateLimiter(config.RATE_LIMIT.POST), upload.single(
       community_id: communityId,
       sender_id: req.user.id,
       content: content || '',
-      media_url: media_url || null
+      media_url: media_url || null,
+      reply_to_id: reply_to_id || null
     });
 
     const io = req.app.get('io');

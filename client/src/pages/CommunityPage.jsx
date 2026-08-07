@@ -6,6 +6,11 @@ import api from '../services/api';
 import UpsellModal from '../components/UpsellModal';
 import { isPremiumGateError } from '../utils/premiumErrors';
 import PremiumBadge from '../components/PremiumBadge';
+import Portal from '../components/Portal';
+import useTypingSignal from '../hooks/useTypingSignal';
+import useMessageInteractions from '../hooks/useMessageInteractions';
+import TypingDots from '../components/chat/TypingDots';
+import { REACTION_EMOJIS, REACTION_LABELS } from '../constants/reactions';
 
 // ─── Custom Voice Playback Component with Paw timeline ──────────
 function VoicePlayer({ audioUrl }) {
@@ -245,6 +250,57 @@ export default function CommunityPage() {
 
   const chatBottomRef = useRef(null);
   const fileInputRef = useRef(null);
+  const composerInputRef = useRef(null);
+  const messageRefsMap = useRef({});
+
+  const [messageReactions, setMessageReactions] = useState({});
+  const [replyingTo, setReplyingTo] = useState(null);
+  const [actionMenuMessage, setActionMenuMessage] = useState(null);
+  const [confirmFetchBackModal, setConfirmFetchBackModal] = useState(null);
+  const [copyToast, setCopyToast] = useState(null);
+  const [typingUsername, setTypingUsername] = useState(null);
+  const [highlightMsgId, setHighlightMsgId] = useState(null);
+
+  const { notifyTyping, stopTyping } = useTypingSignal(
+    (isTyping) => {
+      const socket = getSocket();
+      if (!socket || !id) return;
+      socket.emit('community_typing', { communityId: parseInt(id), isTyping });
+    },
+    id
+  );
+
+  const {
+    reactionPickerMsgId,
+    setReactionPickerMsgId,
+    highlightedMsgReaction,
+    setHighlightedMsgReaction,
+    handleMessageTap,
+    startMessageLongPress,
+    cancelMessageLongPress,
+    handleBubbleTouchMove,
+    handleBubbleTouchEnd,
+    submitMessageReaction,
+  } = useMessageInteractions({
+    currentUserId: user?.id,
+    onReply: (msg) => { setReplyingTo(msg); composerInputRef.current?.focus(); },
+    onOpenActionMenu: (msg, { isOwn, top, left }) => setActionMenuMessage({ msg, isOwn, top, left }),
+    onReact: (messageId, reaction) => {
+      const socket = getSocket();
+      if (socket) {
+        socket.emit('react_to_community_message', { messageId, communityId: parseInt(id), reaction });
+      }
+    },
+  });
+
+  const scrollToMessage = (msgId) => {
+    const el = messageRefsMap.current[msgId];
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setHighlightMsgId(msgId);
+      setTimeout(() => setHighlightMsgId(null), 1500);
+    }
+  };
 
   useEffect(() => {
     loadCommunityDetails();
@@ -285,15 +341,38 @@ export default function CommunityPage() {
       )));
     };
 
+    const onTyping = ({ communityId, userId: typingUserId, username, isTyping }) => {
+      if (typingUserId === user?.id) return;
+      if (communityId === parseInt(id)) {
+        setTypingUsername(isTyping ? username : null);
+      }
+    };
+
+    const onReactionUpdated = ({ messageId, reactions }) => {
+      setMessageReactions(prev => ({ ...prev, [messageId]: reactions }));
+    };
+
+    const onMsgUpdated = (updated) => {
+      if (updated.community_id === parseInt(id)) {
+        setMessages(prev => prev.map(m => m.id === updated.id ? updated : m));
+      }
+    };
+
     socket.on('community_message_received', onMessage);
     socket.on('profile_updated', onProfileUpdated);
+    socket.on('community_user_typing', onTyping);
+    socket.on('community_message_reaction_updated', onReactionUpdated);
+    socket.on('community_message_updated', onMsgUpdated);
 
     return () => {
       socket.off('community_message_received', onMessage);
       socket.off('profile_updated', onProfileUpdated);
+      socket.off('community_user_typing', onTyping);
+      socket.off('community_message_reaction_updated', onReactionUpdated);
+      socket.off('community_message_updated', onMsgUpdated);
       socket.emit('leave_community_chat', { communityId: parseInt(id) });
     };
-  }, [id, getSocket]);
+  }, [id, getSocket, user?.id]);
 
   const loadCommunityDetails = async () => {
     setLoading(true);
@@ -345,6 +424,20 @@ export default function CommunityPage() {
       setPolls(pollRes.polls || []);
       setMembers(memRes.members || []);
 
+      // Reactions are persisted server-side (community_message_reactions)
+      // and come back embedded on each message -- same pattern as 1:1 chat.
+      setMessageReactions(prev => {
+        const next = { ...prev };
+        (msgRes.messages || []).forEach(m => {
+          if (m.reactions && Object.keys(m.reactions).length > 0) {
+            next[m.id] = m.reactions;
+          } else {
+            delete next[m.id];
+          }
+        });
+        return next;
+      });
+
       const fileMessages = (msgRes.messages || []).filter(m => m.message_type === 'file');
       setFiles(fileMessages);
 
@@ -360,11 +453,32 @@ export default function CommunityPage() {
   const handleSendMessage = async (e) => {
     e.preventDefault();
     if (!newMsg.trim()) return;
+    stopTyping();
     try {
-      await api.post(`/communities/${id}/messages`, { content: newMsg });
+      const payload = { content: newMsg };
+      if (replyingTo) payload.reply_to_id = replyingTo.id;
+      await api.post(`/communities/${id}/messages`, payload);
       setNewMsg('');
+      setReplyingTo(null);
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  const handleConfirmFetchBackCommunity = (messageId) => {
+    if (!messageId) return;
+    setConfirmFetchBackModal(null);
+
+    setMessages(prev => prev.map(m => m.id === messageId ? {
+      ...m,
+      content: '🐾 This message was fetched back.',
+      message_type: 'system',
+      media_url: null
+    } : m));
+
+    const socket = getSocket();
+    if (socket) {
+      socket.emit('fetch_back_community_message', { messageId });
     }
   };
 
@@ -739,41 +853,128 @@ export default function CommunityPage() {
                   );
                 }
 
+                const replyPreview = msg.reply_to_id ? (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); scrollToMessage(msg.reply_to_id); }}
+                    className={`flex items-start gap-2 px-3 py-2 rounded-xl text-[10px] mb-1 max-w-full cursor-pointer transition-all hover:opacity-80 active:scale-[0.98] border ${
+                      isOwn
+                        ? 'bg-white/15 border-white/20 text-white/80'
+                        : 'bg-zinc-200/60 dark:bg-zinc-700/50 border-zinc-300/40 dark:border-zinc-600/40 text-zinc-500 dark:text-zinc-400'
+                    }`}
+                  >
+                    <div className={`w-0.5 h-full min-h-[20px] rounded-full flex-shrink-0 ${isOwn ? 'bg-white/40' : 'bg-primary/40'}`} />
+                    <div className="flex flex-col items-start text-left overflow-hidden">
+                      <span className="font-extrabold text-[9px] uppercase tracking-wider">
+                        {msg.reply_sender_id === user?.id ? 'You' : (msg.reply_sender_username || 'Pack member')}
+                      </span>
+                      <span className="truncate max-w-[180px] font-medium">
+                        {msg.reply_message_type === 'voice' ? '🎤 Voice note' :
+                         msg.reply_message_type === 'file' ? '📄 File' :
+                         (msg.reply_content || '...')}
+                      </span>
+                    </div>
+                  </button>
+                ) : null;
+
+                const reactionPills = messageReactions[msg.id] && Object.values(messageReactions[msg.id]).some(c => c > 0) && (
+                  <div className={`absolute -bottom-2.5 ${isOwn ? '-left-2' : '-right-2'} flex items-center`}>
+                    {Object.entries(messageReactions[msg.id]).filter(([, c]) => c > 0).map(([type, count], idx) => (
+                      <span
+                        key={type}
+                        style={{ marginLeft: idx > 0 ? '-8px' : 0, zIndex: 10 - idx }}
+                        className="w-5 h-5 rounded-full bg-white dark:bg-zinc-900 border border-outline-variant/15 shadow-md flex items-center justify-center text-[10px]"
+                        title={`${REACTION_LABELS[type]}${count > 1 ? ` × ${count}` : ''}`}
+                      >
+                        {REACTION_EMOJIS[type]}
+                      </span>
+                    ))}
+                  </div>
+                );
+
                 if (msg.message_type === 'voice') {
                   return (
-                    <div key={msg.id || i} className={`flex gap-2 items-start ${isOwn ? 'justify-end ml-auto max-w-[80%]' : 'max-w-[80%]'}`}>
+                    <div key={msg.id || i} ref={el => { messageRefsMap.current[msg.id] = el; }} className={`flex gap-2 items-start ${isOwn ? 'justify-end ml-auto max-w-[80%]' : 'max-w-[80%]'} ${highlightMsgId === msg.id ? 'bg-primary/5 rounded-2xl' : ''}`}>
                       {!isOwn && (
                         <img className="w-8 h-8 rounded-full object-cover shadow-sm mt-1" src={msg.sender_avatar || '/logo.png'} alt={msg.pet_name} />
                       )}
-                      <div>
+                      <div className="relative">
                         {!isOwn && (
                           <span className="text-[9px] font-black text-zinc-400 uppercase tracking-widest ml-2 mb-0.5 block">{msg.pet_name || msg.username}</span>
                         )}
-                        <VoicePlayer audioUrl={msg.media_url} />
+                        <div
+                          onClick={(e) => handleMessageTap(msg, e)}
+                          onTouchStart={() => startMessageLongPress(msg)}
+                          onTouchMove={(e) => handleBubbleTouchMove(msg, e)}
+                          onTouchEnd={() => handleBubbleTouchEnd(msg)}
+                          onMouseDown={() => startMessageLongPress(msg)}
+                          onMouseUp={() => cancelMessageLongPress(msg.id)}
+                          onMouseLeave={() => cancelMessageLongPress(msg.id)}
+                          className="cursor-pointer select-none"
+                        >
+                          {replyPreview}
+                          <VoicePlayer audioUrl={msg.media_url} />
+                        </div>
+                        {reactionPills}
                       </div>
                     </div>
                   );
                 }
 
                 return (
-                  <div key={msg.id || i} className={`flex gap-2 items-start ${isOwn ? 'justify-end ml-auto max-w-[80%]' : 'max-w-[80%]'}`}>
+                  <div key={msg.id || i} ref={el => { messageRefsMap.current[msg.id] = el; }} className={`flex gap-2 items-start ${isOwn ? 'justify-end ml-auto max-w-[80%]' : 'max-w-[80%]'} ${highlightMsgId === msg.id ? 'bg-primary/5 rounded-2xl' : ''}`}>
                     {!isOwn && (
                       <img className="w-8 h-8 rounded-full object-cover shadow-sm mt-1" src={msg.sender_avatar || '/logo.png'} alt={msg.pet_name} />
                     )}
-                    <div>
+                    <div className="relative">
                       {!isOwn && (
                         <span className="text-[9px] font-black text-zinc-400 uppercase tracking-widest ml-2 mb-0.5 block">{msg.pet_name || msg.username}</span>
                       )}
-                      <div className={`px-4 py-2.5 text-xs leading-relaxed shadow-sm rounded-3xl
+                      <div
+                        onClick={(e) => handleMessageTap(msg, e)}
+                        onTouchStart={() => startMessageLongPress(msg)}
+                        onTouchMove={(e) => handleBubbleTouchMove(msg, e)}
+                        onTouchEnd={() => handleBubbleTouchEnd(msg)}
+                        onMouseDown={() => startMessageLongPress(msg)}
+                        onMouseUp={() => cancelMessageLongPress(msg.id)}
+                        onMouseLeave={() => cancelMessageLongPress(msg.id)}
+                        className={`px-4 py-2.5 text-xs leading-relaxed shadow-sm rounded-3xl cursor-pointer select-none transition-transform active:scale-[0.99]
                         ${isOwn ? 'bg-primary text-white rounded-tr-sm' : 'bg-zinc-50 dark:bg-zinc-800 text-on-surface border border-outline-variant/10 rounded-tl-sm'}`}>
+                        {replyPreview}
                         {msg.content}
                       </div>
+                      {reactionPills}
                     </div>
                   </div>
                 );
               })}
               <div ref={chatBottomRef} />
             </div>
+
+            {typingUsername && (
+              <div className="flex items-center gap-1.5 px-2 pb-1 text-[10px] font-bold text-primary uppercase tracking-widest">
+                <span>{typingUsername} is typing</span>
+                <TypingDots />
+              </div>
+            )}
+
+            {replyingTo && (
+              <div className="flex items-center justify-between gap-2 bg-primary-container/20 border border-primary/10 rounded-2xl px-3 py-2 mb-2 text-left">
+                <div className="min-w-0 flex-1">
+                  <p className="text-[9px] font-black uppercase tracking-wider text-primary">
+                    🐾 Replying to {replyingTo.sender_id === user?.id ? 'your message' : (replyingTo.username || 'this message')}
+                  </p>
+                  <p className="text-[10px] text-on-surface-variant truncate">
+                    {(replyingTo.message_type === 'voice' ? '🎤 Voice note' :
+                      replyingTo.media_url && !replyingTo.content ? '🖼 Photo' :
+                      (replyingTo.content || '')).substring(0, 60)}
+                  </p>
+                </div>
+                <button type="button" onClick={() => setReplyingTo(null)} className="text-zinc-400 hover:text-on-surface flex-shrink-0">
+                  <span className="material-symbols-outlined text-base">close</span>
+                </button>
+              </div>
+            )}
 
             {/* Input area */}
             <form onSubmit={handleSendMessage} className="flex gap-2 items-center bg-zinc-50 dark:bg-zinc-800 p-2 rounded-full border">
@@ -788,11 +989,12 @@ export default function CommunityPage() {
               <input type="file" ref={fileInputRef} className="hidden" onChange={handleMediaUpload} />
 
               <input
+                ref={composerInputRef}
                 type="text"
                 placeholder="Send to the Pack..."
                 className="flex-1 bg-transparent border-none text-xs focus:ring-0 px-3 outline-none text-on-surface"
                 value={newMsg}
-                onChange={e => setNewMsg(e.target.value)}
+                onChange={e => { setNewMsg(e.target.value); notifyTyping(); }}
               />
               <button type="submit" disabled={!newMsg.trim()} className="w-8 h-8 bg-primary rounded-full flex items-center justify-center text-white shadow-md transition-all active:scale-95 disabled:opacity-40">
                 <span className="material-symbols-outlined text-sm">send</span>
@@ -1164,6 +1366,7 @@ export default function CommunityPage() {
         )}
       </div>
 
+      <Portal>
       {/* Delete Group Confirmation Modal */}
       {showDeleteModal && (
         <div className="fixed inset-0 z-[250] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
@@ -1336,6 +1539,134 @@ export default function CommunityPage() {
           <span>{inviteToast}</span>
         </div>
       )}
+
+      {copyToast && (
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-[220] bg-zinc-900/90 text-white dark:bg-white/90 dark:text-zinc-900 px-4 py-2 rounded-full text-xs font-extrabold shadow-lg animate-bounce pointer-events-none">
+          <span>{copyToast}</span>
+        </div>
+      )}
+
+      {/* Double-tap action menu: Copy + Fetch Back (same pattern as 1:1 chat) */}
+      {actionMenuMessage && (
+        <div
+          className="fixed inset-0 z-[150] bg-black/10 backdrop-blur-[1px]"
+          onClick={() => setActionMenuMessage(null)}
+        >
+          <div
+            className="absolute bg-white dark:bg-zinc-900 border border-outline-variant/15 rounded-2xl shadow-xl p-1.5 min-w-[140px] animate-scale-up text-left select-none space-y-0.5"
+            style={{
+              top: `${Math.max(65, actionMenuMessage.top)}px`,
+              left: `${Math.max(16, Math.min(window.innerWidth - 160, actionMenuMessage.left))}px`
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            <button
+              onClick={() => {
+                const textToCopy = actionMenuMessage.msg.content || '';
+                navigator.clipboard?.writeText(textToCopy);
+                setActionMenuMessage(null);
+                setCopyToast('✅ Copied to clipboard');
+                setTimeout(() => setCopyToast(null), 2000);
+              }}
+              className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-extrabold text-on-surface hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+            >
+              <span className="material-symbols-outlined text-sm">content_copy</span>
+              Copy
+            </button>
+
+            {actionMenuMessage.isOwn && (
+              <button
+                onClick={() => {
+                  const msgToFetch = actionMenuMessage.msg;
+                  setActionMenuMessage(null);
+                  setConfirmFetchBackModal(msgToFetch);
+                }}
+                className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-extrabold text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
+              >
+                <span className="text-sm">🐾</span>
+                Fetch Back
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Long-Press Message Reaction Picker (same visual pattern as 1:1 chat) */}
+      {reactionPickerMsgId && (
+        <div
+          className="fixed inset-0 z-[300] bg-black/35 backdrop-blur-[2px] flex items-center justify-center animate-fade-in"
+          onClick={() => { setReactionPickerMsgId(null); setHighlightedMsgReaction(null); }}
+        >
+          <div
+            className="bg-white/90 dark:bg-zinc-900/90 backdrop-blur-md rounded-full px-6 py-4 shadow-2xl flex items-end gap-3.5 border border-outline-variant/10 animate-reaction-picker"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {Object.entries(REACTION_EMOJIS).map(([type, emoji]) => {
+              const isHighlighted = highlightedMsgReaction === type;
+              return (
+                <button
+                  key={type}
+                  data-msg-reaction={type}
+                  onMouseEnter={() => setHighlightedMsgReaction(type)}
+                  onMouseLeave={() => setHighlightedMsgReaction(null)}
+                  onClick={() => submitMessageReaction(reactionPickerMsgId, type)}
+                  className={`flex flex-col items-center gap-1 cursor-pointer transition-all duration-200 origin-bottom select-none outline-none ${
+                    isHighlighted ? 'scale-135 -translate-y-3.5' : 'hover:scale-110'
+                  }`}
+                  title={REACTION_LABELS[type]}
+                >
+                  <span className={`text-3xl transition-all ${
+                    isHighlighted ? 'drop-shadow-[0_0_10px_rgba(244,167,185,0.7)]' : ''
+                  }`}>
+                    {emoji}
+                  </span>
+                  <span className={`text-[9px] font-black uppercase tracking-wider text-primary transition-all duration-150 h-3 ${
+                    isHighlighted ? 'opacity-100 scale-100' : 'opacity-0 scale-75'
+                  }`}>
+                    {REACTION_LABELS[type]}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Fetch Back confirmation (delete-for-sender) */}
+      {confirmFetchBackModal && (
+        <div
+          className="fixed inset-0 z-[200] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 select-none animate-fade-in"
+          onClick={() => setConfirmFetchBackModal(null)}
+        >
+          <div
+            className="bg-white dark:bg-zinc-900 border border-outline-variant/10 rounded-[2.2rem] p-6 max-w-xs w-full shadow-2xl text-center space-y-4 animate-scale-up"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="w-12 h-12 rounded-full bg-rose-50 text-red-500 flex items-center justify-center mx-auto text-xl font-bold">
+              <span className="text-2xl">🐾</span>
+            </div>
+            <div>
+              <h3 className="font-extrabold text-sm text-on-surface">Fetch back this message?</h3>
+              <p className="text-xs text-zinc-400 font-medium mt-1">This will remove it for everyone in the PawCircle.</p>
+            </div>
+            <div className="flex gap-3 pt-2">
+              <button
+                onClick={() => setConfirmFetchBackModal(null)}
+                className="flex-1 py-3 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 text-zinc-700 dark:text-zinc-300 font-extrabold text-xs uppercase tracking-wider rounded-full transition-all active:scale-95"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleConfirmFetchBackCommunity(confirmFetchBackModal.id)}
+                className="flex-1 py-3 bg-red-500 hover:bg-red-600 text-white font-extrabold text-xs uppercase tracking-wider rounded-full shadow-md transition-all active:scale-95"
+              >
+                Fetch Back
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      </Portal>
 
       {upsell && (
         <UpsellModal title={upsell.title} message={upsell.message} onClose={() => setUpsell(null)} />

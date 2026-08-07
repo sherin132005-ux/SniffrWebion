@@ -8,25 +8,13 @@ import api from '../services/api';
 import CallHistory from '../components/CallHistory';
 import PawCircleTab from '../components/PawCircleTab';
 import SharedPostViewerModal from '../components/SharedPostViewerModal';
+import Portal from '../components/Portal';
 import usePullToRefresh from '../hooks/usePullToRefresh';
 import PremiumBadge from '../components/PremiumBadge';
-
-// ── Reaction Emoji Map (same 5 types used for post reactions) ──────
-const REACTION_EMOJIS = {
-  paw: '🐾',
-  bone: '🍖',
-  fish: '🐟',
-  sleep: '💤',
-  love: '💖'
-};
-
-const REACTION_LABELS = {
-  paw: 'Paw',
-  bone: 'Bone',
-  fish: 'Fish',
-  sleep: 'Snooze',
-  love: 'Love'
-};
+import useTypingSignal from '../hooks/useTypingSignal';
+import useMessageInteractions from '../hooks/useMessageInteractions';
+import TypingDots from '../components/chat/TypingDots';
+import { REACTION_EMOJIS, REACTION_LABELS } from '../constants/reactions';
 
 function formatPresence(isOnline, lastActiveAt) {
   if (isOnline) return 'Active now';
@@ -453,8 +441,6 @@ export default function ChatPage() {
   const [actionMenuMessage, setActionMenuMessage] = useState(null);
   const [confirmFetchBackModal, setConfirmFetchBackModal] = useState(null);
   const [copyToast, setCopyToast] = useState(null);
-  const lastTapTimeRef = useRef({});
-  const singleTapTimerRef = useRef({});
   const [highlightMsgId, setHighlightMsgId] = useState(null);
   const messageRefsMap = useRef({});
 
@@ -476,14 +462,42 @@ export default function ChatPage() {
   const [typingUsers, setTypingUsers] = useState({});
 const [failedMessages, setFailedMessages] = useState({});
 const [messageReactions, setMessageReactions] = useState({});
-const [reactionPickerMsgId, setReactionPickerMsgId] = useState(null);
-const [highlightedMsgReaction, setHighlightedMsgReaction] = useState(null);
-const msgLongPressTimerRef = useRef({});
-const msgLongPressTriggeredRef = useRef({});
-const typingStopTimerRef = useRef(null);
 
   const { pet } = useAuth();
   useEffect(() => { loadConversations(); loadMatches(); }, [pet?.id]);
+
+  const { notifyTyping, stopTyping } = useTypingSignal(
+    (isTyping) => {
+      const socket = getSocket();
+      if (!socket || !activeConv) return;
+      socket.emit(isTyping ? 'typing_start' : 'typing_stop', { conversationId: activeConv.id });
+    },
+    activeConv?.id
+  );
+
+  const {
+    reactionPickerMsgId,
+    setReactionPickerMsgId,
+    highlightedMsgReaction,
+    setHighlightedMsgReaction,
+    handleMessageTap,
+    startMessageLongPress,
+    cancelMessageLongPress,
+    handleBubbleTouchMove,
+    handleBubbleTouchEnd,
+    submitMessageReaction,
+  } = useMessageInteractions({
+    currentUserId: user?.id,
+    onReply: (msg) => { setReplyingTo(msg); inputFieldRef.current?.focus(); },
+    onOpenActionMenu: (msg, { isOwn, top, left }) => setActionMenuMessage({ msg, isOwn, top, left }),
+    onReact: (messageId, reaction) => {
+      const socket = getSocket();
+      if (socket && activeConv) {
+        // Backend toggles: tapping the same reaction again removes it.
+        socket.emit('react_to_message', { messageId, conversationId: activeConv.id, reaction });
+      }
+    },
+  });
 
   useEffect(() => {
     const socket = getSocket();
@@ -767,6 +781,8 @@ const typingStopTimerRef = useRef(null);
   const sendMessage = (type = 'text', mediaUrl = null, inviteContent = null) => {
     const socket = getSocket();
     if (!socket || !activeConv) return;
+
+    stopTyping();
 
     let payload = {
       conversationId: activeConv.id,
@@ -1164,113 +1180,6 @@ const typingStopTimerRef = useRef(null);
     }, 300);
   };
 
-  const handleMessageTap = (msg, e) => {
-    const excludedTypes = ['meetup', 'pet_profile', 'shared_post', 'system'];
-    if (excludedTypes.includes(msg.message_type)) return;
-
-    const msgId = msg.id;
-
-    // A long-press that just opened the reaction picker also fires a
-    // trailing click/tap on release -- swallow that one click so it
-    // doesn't also open the action menu or start a reply.
-    if (msgLongPressTriggeredRef.current[msgId]) {
-      msgLongPressTriggeredRef.current[msgId] = false;
-      return;
-    }
-
-    const now = Date.now();
-    const lastTap = lastTapTimeRef.current[msgId] || 0;
-    const isOwn = msg.sender_id === user?.id;
-
-    if (singleTapTimerRef.current[msgId]) {
-      clearTimeout(singleTapTimerRef.current[msgId]);
-      singleTapTimerRef.current[msgId] = null;
-    }
-
-    if (now - lastTap < 300) {
-      e.preventDefault();
-      e.stopPropagation();
-      lastTapTimeRef.current[msgId] = 0;
-
-      const rect = e.currentTarget.getBoundingClientRect();
-      setActionMenuMessage({
-        msg,
-        isOwn,
-        top: Math.max(65, rect.top - 50),
-        left: isOwn ? Math.max(16, rect.right - 155) : Math.max(16, rect.left)
-      });
-    } else {
-      lastTapTimeRef.current[msgId] = now;
-
-      const isTextMsg = (!msg.message_type || msg.message_type === 'text') && !msg.media_url;
-      if (isTextMsg) {
-        singleTapTimerRef.current[msgId] = setTimeout(() => {
-          singleTapTimerRef.current[msgId] = null;
-          setReplyingTo(msg);
-          inputFieldRef.current?.focus();
-        }, 300);
-      }
-    }
-  };
-
-  // ── Message Reaction Long-Press (same 500ms press-and-hold pattern
-  // used for post reactions on the Home feed) ────────────────────────
-  const startMessageLongPress = (msg) => {
-    const excludedTypes = ['meetup', 'pet_profile', 'shared_post', 'system'];
-    if (excludedTypes.includes(msg.message_type)) return;
-
-    msgLongPressTriggeredRef.current[msg.id] = false;
-    msgLongPressTimerRef.current[msg.id] = setTimeout(() => {
-      msgLongPressTriggeredRef.current[msg.id] = true;
-      if (navigator.vibrate) navigator.vibrate(15);
-      setReactionPickerMsgId(msg.id);
-    }, 500);
-  };
-
-  const cancelMessageLongPress = (msgId) => {
-    if (msgLongPressTimerRef.current[msgId]) {
-      clearTimeout(msgLongPressTimerRef.current[msgId]);
-      msgLongPressTimerRef.current[msgId] = null;
-    }
-  };
-
-  const handleBubbleTouchMove = (msg, e) => {
-    if (reactionPickerMsgId === msg.id) {
-      const touch = e.touches[0];
-      const elem = document.elementFromPoint(touch.clientX, touch.clientY);
-      const reactType = elem?.closest('[data-msg-reaction]')?.getAttribute('data-msg-reaction');
-      setHighlightedMsgReaction(reactType || null);
-      e.preventDefault();
-      return;
-    }
-    // Any movement before the long-press timer fires means the user is
-    // scrolling the message list, not holding still -- cancel it.
-    cancelMessageLongPress(msg.id);
-  };
-
-  const handleBubbleTouchEnd = (msg) => {
-    cancelMessageLongPress(msg.id);
-
-    if (reactionPickerMsgId === msg.id) {
-      if (highlightedMsgReaction) {
-        submitMessageReaction(msg.id, highlightedMsgReaction);
-      } else {
-        setReactionPickerMsgId(null);
-      }
-      setHighlightedMsgReaction(null);
-    }
-  };
-
-  const submitMessageReaction = (messageId, reaction) => {
-    const socket = getSocket();
-    if (socket && activeConv) {
-      // Backend toggles: tapping the same reaction again removes it.
-      socket.emit('react_to_message', { messageId, conversationId: activeConv.id, reaction });
-    }
-    setReactionPickerMsgId(null);
-    setHighlightedMsgReaction(null);
-  };
-
   const handleConfirmFetchBack = async (messageId) => {
     if (!messageId) return;
     setConfirmFetchBackModal(null);
@@ -1340,16 +1249,16 @@ const typingStopTimerRef = useRef(null);
                 <PremiumBadge pet={activeConv} size="text-base" />
               </h3>
               <span
-  className={`text-[10px] font-bold uppercase tracking-widest ${
+  className={`text-[10px] font-bold uppercase tracking-widest flex items-center gap-1.5 ${
     typingUsers[activeConv.id]
-      ? 'text-primary animate-pulse'
+      ? 'text-primary'
       : onlineUsers.has(activeConv.partner_user_id)
       ? 'text-emerald-500'
       : 'text-zinc-400'
   }`}
 >
   {typingUsers[activeConv.id]
-    ? 'Typing...'
+    ? (<>Typing <TypingDots /></>)
     : formatPresence(
         onlineUsers.has(activeConv.partner_user_id),
         lastActiveTimes[activeConv.partner_user_id]
@@ -1763,22 +1672,7 @@ className="w-10 h-10 rounded-full bg-surface-container-low hover:bg-emerald-100 
                   value={newMsg}
                   onChange={e => {
   handleInputChange(e.target.value);
-
-  const socket = getSocket();
-  if (socket && activeConv) {
-    socket.emit('typing_start', {
-      conversationId: activeConv.id
-    });
-
-    if (typingStopTimerRef.current)
-      clearTimeout(typingStopTimerRef.current);
-
-    typingStopTimerRef.current = setTimeout(() => {
-      socket.emit('typing_stop', {
-        conversationId: activeConv.id
-      });
-    }, 2000);
-  }
+  notifyTyping();
 }}
                   onKeyDown={e => e.key === 'Enter' && (newMsg.trim() || preSendMedia.length > 0) && handleComposerSend()}
                 />
@@ -1796,8 +1690,8 @@ className="w-10 h-10 rounded-full bg-surface-container-low hover:bg-emerald-100 
         </div>
 
         {showMeetupBottomSheet && (
-          <div className="fixed inset-0 z-[150] bg-black/50 flex items-end justify-center" onClick={() => setShowMeetupBottomSheet(false)}>
-            <div className="bg-white dark:bg-zinc-900 w-full max-w-lg rounded-t-[2.5rem] p-6 space-y-4 bottom-sheet-slide-up text-left" onClick={e => e.stopPropagation()}>
+          <div className="fixed inset-0 z-[150] bg-black/50 flex items-end justify-center pb-[env(safe-area-inset-bottom)]" onClick={() => setShowMeetupBottomSheet(false)}>
+            <div className="bg-white dark:bg-zinc-900 w-full max-w-lg rounded-t-[2.5rem] p-6 space-y-4 bottom-sheet-slide-up text-left max-h-[90dvh] overflow-y-auto" onClick={e => e.stopPropagation()}>
               <div className="flex justify-between items-center pb-2 border-b">
                 <h3 className="font-extrabold text-sm uppercase tracking-widest text-on-surface">📍 Propose a Meetup</h3>
                 <button onClick={() => setShowMeetupBottomSheet(false)} className="material-symbols-outlined text-zinc-400 hover:text-red-500">close</button>
@@ -2210,6 +2104,7 @@ className="w-10 h-10 rounded-full bg-surface-container-low hover:bg-emerald-100 
             )}
 
             {confirmRemoveModal && (
+              <Portal>
               <div className="fixed inset-0 z-[200] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 select-none animate-fade-in" onClick={() => setConfirmRemoveModal(null)}>
                 <div className="bg-white dark:bg-zinc-900 border border-outline-variant/10 rounded-[2.2rem] p-6 max-w-xs w-full shadow-2xl text-center space-y-4 animate-scale-up" onClick={e => e.stopPropagation()}>
                   <div className="w-12 h-12 rounded-full bg-rose-50 text-red-500 flex items-center justify-center mx-auto text-xl font-bold">
@@ -2235,6 +2130,7 @@ className="w-10 h-10 rounded-full bg-surface-container-low hover:bg-emerald-100 
                   </div>
                 </div>
               </div>
+              </Portal>
             )}
           </section>
         )}

@@ -170,6 +170,10 @@ export default function HomePage() {
   const [reactionUsersList, setReactionUsersList] = useState([]);
   const [activeReactionTab, setActiveReactionTab] = useState('paw');
   const [loadingReactionsList, setLoadingReactionsList] = useState(false);
+  // Tapping the reaction row (below "Licked by...") opens this read-only
+  // count breakdown -- separate from showFullReactionsPost above, which
+  // lists individual users per type and is unrelated to this feature.
+  const [reactionSummaryPost, setReactionSummaryPost] = useState(null);
   const longPressTimer = useRef(null);
   const longPressTriggered = useRef(false);
 
@@ -928,6 +932,33 @@ export default function HomePage() {
     );
   };
 
+  // Sorted (highest count first), emoji-only reaction types for a post --
+  // used both by the row under "Licked by..." and the tap-to-open summary
+  // popup, so the two are always guaranteed to agree on ordering.
+  const sortedReactionEntries = (reactions) =>
+    Object.entries(reactions || {})
+      .filter(([, count]) => count > 0)
+      .sort((a, b) => b[1] - a[1]);
+
+  // Compact, emoji-only, popularity-ordered reaction row shown on the post
+  // card itself -- LinkedIn-style. No counts here (those only appear in the
+  // tap-to-open summary popup); hidden entirely when nobody has reacted.
+  const renderReactionRow = (post) => {
+    const entries = sortedReactionEntries(post.reactions);
+    if (entries.length === 0) return null;
+    return (
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); setReactionSummaryPost(post.id); }}
+        className="flex items-center gap-1"
+      >
+        {entries.map(([type]) => (
+          <span key={type} className="text-base leading-none">{REACTION_EMOJIS[type]}</span>
+        ))}
+      </button>
+    );
+  };
+
   // ── Profile completion ─────────────────────────────────────
   const CHECKLIST_MAP = {
     avatar_url: { label: '📷 Missing Profile Photo', icon: 'add_a_photo', focus: 'avatar' },
@@ -1349,6 +1380,7 @@ export default function HomePage() {
                       {formatLikeCount(post.like_count) && (
                         <p className="font-bold text-xs text-on-surface">{formatLikeCount(post.like_count)}</p>
                       )}
+                      {renderReactionRow(post)}
                       {post.caption && (
                         <p className="text-on-surface-variant text-sm leading-relaxed whitespace-pre-line">{renderCaption(post.caption)}</p>
                       )}
@@ -1466,6 +1498,40 @@ export default function HomePage() {
           </div>
         </div>
       )}
+
+      {/* Reaction Summary Popup -- read-only breakdown, opened by tapping the
+          reaction row on a post card. Does not allow reacting or changing
+          reactions; sizing/styling intentionally mirrors the reaction picker
+          above (same pill/blur/shadow language) rather than introducing a
+          new visual pattern. */}
+      {reactionSummaryPost && (() => {
+        // Looked up fresh from `posts` (rather than a snapshot taken when the
+        // row was tapped) so if a reaction changes while this is open, the
+        // breakdown stays in sync instead of showing stale counts.
+        const summaryPost = posts.find(p => p.id === reactionSummaryPost);
+        if (!summaryPost) return null;
+        return (
+          <div
+            className="fixed inset-0 z-[200] bg-black/35 backdrop-blur-[2px] flex items-center justify-center animate-fade-in"
+            onClick={() => setReactionSummaryPost(null)}
+          >
+            <div
+              className="bg-white/90 dark:bg-zinc-900/90 backdrop-blur-md rounded-3xl px-5 py-4 shadow-2xl border border-outline-variant/10 animate-reaction-picker max-w-[280px]"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <p className="text-[9px] font-black uppercase tracking-widest text-zinc-400 mb-2.5 text-center">Reactions</p>
+              <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
+                {sortedReactionEntries(summaryPost.reactions).map(([type, count]) => (
+                  <div key={type} className="flex items-center gap-1.5">
+                    <span className="text-xl leading-none">{REACTION_EMOJIS[type]}</span>
+                    <span className="text-sm font-extrabold text-on-surface">{count}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Reusable Share Sheet */}
       {sharePost && (

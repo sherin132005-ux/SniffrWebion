@@ -6,6 +6,7 @@ import usePullToRefresh from '../hooks/usePullToRefresh';
 
 import { useAuth } from '../context/AuthContext';
 import PremiumBadge from '../components/PremiumBadge';
+import Portal from '../components/Portal';
 
 const areas = ['locality', 'city', 'country', 'region'];
 const areaLabels = { locality: 'Locality', city: 'City', country: 'Country', region: 'Region' };
@@ -551,6 +552,7 @@ const [myPetId, setMyPetId] = useState(null);
         </div>
       </main>
 
+      <Portal>
       {/* Cinematic Champion Entrance Overlay */}
       {hallOfFamePet && (
         <div className="fixed inset-0 z-[200] bg-zinc-950/75 flex items-center justify-center p-6 animate-cinematic-bg">
@@ -578,11 +580,11 @@ const [myPetId, setMyPetId] = useState(null);
       {/* Spotlight History Panel Overlay */}
       {showHistory && (
         <div
-          className="fixed inset-0 z-[160] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-4 animate-fade-in"
+          className="fixed inset-0 z-[160] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center pt-4 px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:p-4 animate-fade-in"
           onClick={() => setShowHistory(false)}
         >
           <div
-            className="bg-white rounded-t-[2.5rem] sm:rounded-[2.5rem] w-full max-w-md p-6 pb-8 space-y-6 animate-scale-up shadow-2xl relative border border-outline-variant/10 text-left"
+            className="bg-white rounded-t-[2.5rem] sm:rounded-[2.5rem] w-full max-w-md p-6 pb-8 space-y-6 animate-scale-up shadow-2xl relative border border-outline-variant/10 text-left max-h-[90dvh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex justify-between items-center pb-2 border-b border-zinc-100">
@@ -643,6 +645,7 @@ const [myPetId, setMyPetId] = useState(null);
           </div>
         </div>
       )}
+      </Portal>
     </div>
   );
 }

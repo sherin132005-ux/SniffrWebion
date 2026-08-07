@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import Portal from './Portal';
 
 const SLIDES = [
   {
@@ -42,6 +43,7 @@ export default function WelcomeSlider() {
   if (dismissing) return null;
 
   return (
+    <Portal>
     <div className="fixed inset-0 z-[500] bg-background text-on-surface flex items-center justify-center overflow-hidden selection:bg-primary-container selection:text-on-primary-container animate-fade-in">
       {/* Plush canvas background, matching LoadingPage.jsx */}
       <div className="fixed inset-0 bg-gradient-to-br from-primary to-primary-fixed-dim opacity-10" />
@@ -91,5 +93,6 @@ export default function WelcomeSlider() {
         </button>
       </main>
     </div>
+    </Portal>
   );
 }

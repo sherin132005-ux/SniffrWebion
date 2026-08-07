@@ -5,6 +5,7 @@ import api from '../services/api';
 import { getCurrentGPSLocation, getStoredLocation } from '../services/locationService';
 import UpsellModal from '../components/UpsellModal';
 import { isPremiumGateError } from '../utils/premiumErrors';
+import Portal from '../components/Portal';
 
 export default function CreateProfilePage() {
   const { state } = useLocation();
@@ -348,6 +349,7 @@ export default function CreateProfilePage() {
 
       {/* Pet Joined Family Prompt Modal */}
       {createdPetModal && (
+        <Portal>
         <div className="fixed inset-0 z-[250] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 select-none animate-fade-in">
           <div className="bg-white dark:bg-zinc-900 border border-outline-variant/10 rounded-[2.5rem] p-6 max-w-xs w-full shadow-2xl text-center space-y-4 animate-scale-up">
             <div className="w-16 h-16 rounded-full bg-rose-50 text-primary flex items-center justify-center mx-auto text-3xl font-bold">
@@ -381,6 +383,7 @@ export default function CreateProfilePage() {
             </div>
           </div>
         </div>
+        </Portal>
       )}
 
       {upsell && (

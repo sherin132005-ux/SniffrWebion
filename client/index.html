@@ -33,6 +33,10 @@
 </head>
 <body>
   <div id="root"></div>
+  <!-- Every modal/dialog/overlay portals here instead of rendering inside #root, so no
+       ancestor's CSS (transform, filter, animation, etc.) can ever hijack its
+       "position: fixed" containing block back to something other than the real viewport. -->
+  <div id="modal-root"></div>
   <script type="module" src="/src/main.jsx"></script>
 </body>
 </html>

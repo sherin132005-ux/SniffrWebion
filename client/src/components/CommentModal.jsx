@@ -95,6 +95,7 @@ export default function CommentModal({ postId, onClose, onCommentAdded }) {
         WebkitBackdropFilter: 'blur(12px)',
         opacity: visible ? 1 : 0,
         transition: 'opacity 0.25s ease',
+        paddingBottom: 'env(safe-area-inset-bottom)',
       }}
       onClick={(e) => {
         if (e.target === e.currentTarget) {
@@ -115,8 +116,8 @@ export default function CommentModal({ postId, onClose, onCommentAdded }) {
           backgroundColor: '#ffffff',
           width: '100%',
           maxWidth: '32rem',
-          maxHeight: '80vh',
-          minHeight: '45vh',
+          maxHeight: '80dvh',
+          minHeight: '45dvh',
           borderTopLeftRadius: '2rem',
           borderTopRightRadius: '2rem',
           boxShadow: '0 -8px 40px rgba(0,0,0,0.18)',

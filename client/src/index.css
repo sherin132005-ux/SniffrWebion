@@ -190,6 +190,22 @@
 .delay-500  { animation-delay: 500ms; }
 
 /* ==========================================
+   SEQUENTIAL TYPING DOTS (chat "user is typing" indicator)
+   ========================================== */
+@keyframes typing-seq-dot {
+  0%, 100% { opacity: 0; transform: scale(0.5); }
+  10%, 80% { opacity: 1; transform: scale(1); }
+}
+.typing-seq-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  display: inline-block;
+  animation: typing-seq-dot 1.5s ease-in-out infinite;
+}
+
+/* ==========================================
    TYPING INDICATOR
    ========================================== */
 .typing-dot {
@@ -527,8 +543,20 @@
 /* ==========================================
    PAGE TRANSITION
    ========================================== */
+/* fill-mode intentionally omitted (no "both"/"forwards"): once this entrance
+   animation finishes, `transform` must revert to the computed value `none`,
+   not stay at `translateY(0)`. A non-none transform on this wrapper — even
+   an identity one — creates a new containing block for every `position:
+   fixed` descendant (i.e. nearly all app modals/dialogs/sheets, since only
+   a few are portaled to document.body), so their `fixed inset-0` stops
+   anchoring to the real viewport and anchors to this div's own (often
+   taller-than-viewport) content box instead — that's what pushed popups
+   below the fold and left backdrops not covering the bottom nav/sidebar.
+   The visual result at rest is identical either way (translateY(0) already
+   looks like no offset); this only changes the post-animation containing
+   block, not the animation itself. */
 .page-enter {
-  animation: slide-up 0.4s cubic-bezier(0.34,1.56,0.64,1) both;
+  animation: slide-up 0.4s cubic-bezier(0.34,1.56,0.64,1);
 }
 
 /* ==========================================
@@ -773,8 +801,15 @@
     transform: translateY(0);
   }
 }
+/* fill-mode intentionally omitted here too -- see .page-enter above.
+   ChatPage's full-screen conversation view (the "fixed inset-0" container
+   in ChatPage.jsx) carries this class directly; with "forwards" it kept a
+   non-none transform after the 0.28s animation, turning that container into
+   a containing block for its own nested fixed dialogs (media viewer,
+   meetup sheet, remove-member confirm, etc.), pushing them out of the real
+   viewport the same way .page-enter did app-wide. */
 .message-enter-animate {
-  animation: message-enter 0.28s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+  animation: message-enter 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 /* Skeleton loader pulsing styles */

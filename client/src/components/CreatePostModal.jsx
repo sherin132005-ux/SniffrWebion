@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import api from '../services/api';
+import Portal from './Portal';
 
 export default function CreatePostModal({ onClose, onPostCreated }) {
   const [caption, setCaption] = useState('');
@@ -200,6 +201,7 @@ export default function CreatePostModal({ onClose, onPostCreated }) {
   };
 
   return (
+    <Portal>
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[100] flex items-center justify-center p-4 selection:bg-primary-container selection:text-on-primary-container" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="bg-surface-container-lowest p-6 sm:p-8 rounded-[2.5rem] max-w-sm w-full shadow-2xl relative overflow-hidden transition-all duration-300 transform scale-100 opacity-100 border border-outline-variant/10">
         
@@ -380,5 +382,6 @@ export default function CreatePostModal({ onClose, onPostCreated }) {
         </div>
       </div>
     </div>
+    </Portal>
   );
 }

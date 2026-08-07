@@ -194,6 +194,19 @@ socket.on('disconnect', async () => {
     if (sockets.size === 0) {
       onlineUsers.delete(userId);
 
+      // Clear this user's typing indicator(s) immediately instead of
+      // leaving the other party staring at a stale "Typing..." for up to
+      // the 4s safety-net window below -- a dropped connection should
+      // read the same as the user having stopped typing right away.
+      for (const [key, timeout] of typingTimeouts) {
+        if (key.endsWith(`_${userId}`)) {
+          clearTimeout(timeout);
+          typingTimeouts.delete(key);
+          const conversationId = key.slice(0, -`_${userId}`.length);
+          io.to(`conv_${conversationId}`).emit('user_typing', { conversationId: Number(conversationId), userId, isTyping: false });
+        }
+      }
+
       const lastActiveAt = new Date().toISOString();
 
       await db.run(

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import api from '../services/api';
+import Portal from './Portal';
 
 // ─── Pawsitive level labels ───────────────────────────────────
 export function getPawsitiveLabel(score) {
@@ -167,9 +168,10 @@ export default function PawsitiveModal({ currentScore = 50, onClose, onSaved }) 
   const activeVibe = VIBES.find(v => score >= v.range[0] && score <= v.range[1]);
 
   return (
-    // Backdrop — z-[300] so it is above everything; NO overflow-hidden (allows thumb to render)
+    <Portal>
+    {/* Backdrop -- z-[300] so it is above everything; NO overflow-hidden (allows thumb to render) */}
     <div
-      className="fixed inset-0 z-[300] flex items-end lg:items-center justify-center"
+      className="fixed inset-0 z-[300] flex items-end lg:items-center justify-center pb-[env(safe-area-inset-bottom)] lg:pb-0"
       style={{ background: 'rgba(0,0,0,0.55)' }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
@@ -177,7 +179,7 @@ export default function PawsitiveModal({ currentScore = 50, onClose, onSaved }) 
       <div
         ref={containerRef}
         className="bg-white w-full max-w-lg rounded-t-[2.5rem] lg:rounded-[2.5rem] shadow-2xl overflow-y-auto max-h-[95dvh]"
-        style={{ animation: 'slideUpModal 0.35s cubic-bezier(0.32,0.72,0,1) both' }}
+        style={{ animation: 'slideUpModal 0.35s cubic-bezier(0.32,0.72,0,1)' }}
         onClick={e => e.stopPropagation()}
       >
         {/* Inline keyframes */}
@@ -302,5 +304,6 @@ export default function PawsitiveModal({ currentScore = 50, onClose, onSaved }) 
         </div>
       </div>
     </div>
+    </Portal>
   );
 }
