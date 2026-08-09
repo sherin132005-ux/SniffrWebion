@@ -173,11 +173,22 @@ export default function NotificationsPanel({ isOpen, onClose, onUnreadCountChang
       setToastMessage(prev => (prev && prev.id === data.notificationId ? null : prev));
     };
 
+    // Sent when a request notification's action_status changes via a path
+    // OTHER than this panel's own Accept/Reject buttons (i.e. resolved from
+    // the Meet page's Pending tab) -- patches that one card in place so an
+    // already-open panel never shows stale Accept/Reject buttons.
+    const handleNotificationUpdated = (data) => {
+      if (!data || !data.notification) return;
+      setNotifications(prev => prev.map(n => n.id === data.notification.id ? data.notification : n));
+    };
+
     socket.on('notification_received', handleNotificationReceived);
     socket.on('notification_removed', handleNotificationRemoved);
+    socket.on('notification_updated', handleNotificationUpdated);
     return () => {
       socket.off('notification_received', handleNotificationReceived);
       socket.off('notification_removed', handleNotificationRemoved);
+      socket.off('notification_updated', handleNotificationUpdated);
     };
   }, [socket, activeCategory, unreadCount, onUnreadCountChange, showToast]);
 
@@ -224,7 +235,8 @@ export default function NotificationsPanel({ isOpen, onClose, onUnreadCountChang
     try {
       const res = await api.post(`/notifications/match-request/${notifId}/respond`, { action });
       if (res && res.success) {
-        setNotifications(prev => prev.map(n => n.id === notifId ? { ...n, action_status: action, is_read: 1 } : n));
+        const resolvedStatus = res.notification?.action_status || (action === 'accept' ? 'accepted' : 'declined');
+        setNotifications(prev => prev.map(n => n.id === notifId ? { ...n, action_status: resolvedStatus, is_read: 1 } : n));
         setUnreadCount(res.unreadCount || 0);
         if (onUnreadCountChange) onUnreadCountChange(res.unreadCount || 0);
 
@@ -478,9 +490,12 @@ else if (
                         } else if (notif.category === 'offers' || notif.type === 'premium_offer' || notif.type === 'subscription_reminder' || notif.type === 'premium_benefits' || notif.type === 'upgrade_promotion') {
                           onClose();
                           navigate('/profile', { state: { openSettings: true, openPremium: true } });
+                        } else if (notif.type === 'match_request') {
+                          onClose();
+                          navigate(`/profile/${notif.sender_pet_id}`);
                         } else if (notif.type === 'new_match' || notif.category === 'matches') {
                           onClose();
-                          navigate('/chat', { state: { petId: notif.sender_pet_id || notif.target_id, autoOpen: true } });
+                          navigate(`/profile/${notif.sender_pet_id}`);
                         }
                       }}
                       className={`p-3.5 rounded-2xl border transition-all relative cursor-pointer ${notif.is_read ? 'bg-zinc-50/70 dark:bg-zinc-800/30 border-zinc-100 dark:border-zinc-800/50' : 'bg-white dark:bg-zinc-800 border-rose-200/80 dark:border-rose-900/50 shadow-xs ring-1 ring-rose-400/20'}`}
@@ -541,7 +556,7 @@ else if (
                                     onClick={(e) => { e.stopPropagation(); handleMatchRequestRespond(notif.id, 'decline'); }}
                                     className="flex-1 py-1.5 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 text-zinc-600 dark:text-zinc-300 font-extrabold text-[11px] rounded-xl transition-transform active:scale-95"
                                   >
-                                    ✕ Decline
+                                    ✕ Reject
                                   </button>
                                 </>
                               ) : (

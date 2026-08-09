@@ -5,6 +5,7 @@ import PetRepo from '../models/PetRepository.js';
 import NotificationRepo from '../models/NotificationRepository.js';
 import UserRepo from '../models/UserRepository.js';
 import { sendRealtimeNotification } from '../socket/notifications.js';
+import { notifyMeetMatch } from '../services/meetNotifications.js';
 import { canUndoLike } from '../services/premiumGate.js';
 import { sendServerError } from '../utils/errors.js';
 import { rateLimiter } from '../middleware/rateLimiter.js';
@@ -17,58 +18,26 @@ const FIVE_MINS_MS = 5 * 60 * 1000;
 const UNDO_WINDOW_MS = 5000;
 
 // swipeId -> setTimeout handle. Lets POST /undo cancel a pending commit before
-// it fires. Purely an optimization/cleanup -- commitPendingLike() re-checks the
-// swipe's status itself, so even an uncancelled timer is a safe no-op post-undo.
+// it fires. Purely an optimization/cleanup -- commitPendingSwipeAction() is a
+// safe no-op on an already-deleted/committed row either way.
 const pendingCommitTimers = new Map();
 
-async function sendMatchNotifications(io, matchId, petA, petB) {
-  await sendRealtimeNotification(io, petA.user_id, {
-    category: 'matches',
-    type: 'new_match',
-    title: "It's a Match! 🎉",
-    description: `You and ${petB.name} matched! Start chatting.`,
-    avatarUrl: petB.avatar_url,
-    targetId: String(matchId),
-    senderPetId: petB.id,
-    actionStatus: 'accepted',
-  });
-  await sendRealtimeNotification(io, petB.user_id, {
-    category: 'matches',
-    type: 'new_match',
-    title: "It's a Match! 🎉",
-    description: `You and ${petA.name} matched! Start chatting.`,
-    avatarUrl: petA.avatar_url,
-    targetId: String(matchId),
-    senderPetId: petA.id,
-    actionStatus: 'accepted',
-  });
-}
-
-// Runs once the 5s undo window elapses. commitSwipe() is the only path that
-// ever creates a match now -- POST /like never does this synchronously, which
-// is what guarantees a match can't form until both sides' undo windows (if any
-// are still open) have closed.
-async function commitPendingLike(io, swipeId) {
+// Runs once the 5s undo window elapses for a FRESH swipe (left or right).
+// Never forms a match -- a swipe is never itself an Accept. See
+// MatchRepository's createPendingSwipeAction/acceptMeetRequest split.
+async function commitPendingSwipeAction(swipeId) {
   pendingCommitTimers.delete(swipeId);
   try {
-    const result = await MatchRepo.commitSwipe(swipeId);
-    if (result.matched) {
-      const [petA, petB] = await Promise.all([
-        PetRepo.findById(result.fromPetId),
-        PetRepo.findById(result.toPetId),
-      ]);
-      if (petA && petB) {
-        await sendMatchNotifications(io, result.matchId, petA, petB);
-      }
-    }
+    await MatchRepo.commitPendingSwipeAction(swipeId);
   } catch (err) {
-    console.error('Failed to commit pending like:', err);
+    console.error('Failed to commit pending swipe action:', err);
   }
 }
 
 // GET /api/matches/discover?lat=&lng=&radius= — nearby swipeable pets
-// (excludes own pet, existing matches, pets swiped on within the last
-// 20 days, and pets already liked -- see MatchRepo.getExcludedMeetPetIds)
+// (excludes own pet, real Meet matches, live sniff requests/cooldowns in
+// either direction, and pets already chatting with -- see
+// MatchRepo.getExcludedMeetPetIds)
 router.get('/discover', async (req, res) => {
   try {
     const myPet = await PetRepo.getActivePet(req.user.id);
@@ -127,10 +96,13 @@ router.get('/', async (req, res) => {
   }
 });
 
-// POST /api/matches/like/:petId — swipe right. Stores the like as 'pending' and
-// gives the sender a 5s undo window (see POST /undo/:petId) before it commits
-// and match-detection runs. The recipient gets an immediate "someone liked you"
-// notification either way -- only the match itself waits on the undo window.
+// POST /api/matches/like/:petId — swipe right. Sends ONE pending sniff
+// request with a 5s undo window (see POST /undo/:petId). A swipe is never
+// itself an Accept -- a match only ever forms via POST /pending/:petId/respond
+// or POST /notifications/match-request/:id/respond. If the target already
+// has a live request out to us, the swipe is silently absorbed (see
+// MatchRepo.createPendingSwipeAction) rather than creating a duplicate or
+// contradictory row.
 router.post('/like/:petId', rateLimiter(config.RATE_LIMIT.POST), async (req, res) => {
   try {
     const myPet = await PetRepo.getActivePet(req.user.id);
@@ -146,41 +118,41 @@ router.post('/like/:petId', rateLimiter(config.RATE_LIMIT.POST), async (req, res
       return res.status(403).json({ error: 'BLOCKED', message: 'You cannot interact with this profile.' });
     }
 
-    const swipe = await MatchRepo.createPendingLike(myPet.id, targetPetId);
+    const result = await MatchRepo.createPendingSwipeAction(myPet.id, targetPetId, 'awaiting');
+    if (result.type === 'absorbed') {
+      return res.json({ pending: false, absorbed: true });
+    }
 
     const io = req.app.get('io');
     if (io) {
       const notification = await sendRealtimeNotification(io, targetPet.user_id, {
         category: 'matches',
-        type: 'meet_like',
-        title: `${myPet.name} sent you a treat! 🦴`,
-        description: `${myPet.name} liked your profile on Meet. Like them back to match!`,
+        type: 'match_request',
+        title: `🥰 ${myPet.name} couldn't resist a sniff!`,
+        description: `${myPet.name} sent you a sniff request. Accept to match!`,
         avatarUrl: myPet.avatar_url,
         targetId: String(myPet.id),
         senderPetId: myPet.id,
         actionStatus: 'pending',
       });
       if (notification) {
-        await MatchRepo.attachNotificationId(swipe.id, notification.id);
+        await MatchRepo.attachNotificationId(result.swipeId, notification.id);
       }
     }
 
-    const timer = setTimeout(() => commitPendingLike(io, swipe.id), UNDO_WINDOW_MS);
-    pendingCommitTimers.set(swipe.id, timer);
+    const timer = setTimeout(() => commitPendingSwipeAction(result.swipeId), UNDO_WINDOW_MS);
+    pendingCommitTimers.set(result.swipeId, timer);
 
-    res.json({ pending: true, swipeId: swipe.id, undoWindowMs: UNDO_WINDOW_MS, matched: false });
+    res.json({ pending: true, swipeId: result.swipeId, undoWindowMs: UNDO_WINDOW_MS, matched: false });
   } catch (err) {
     sendServerError(res, err);
   }
 });
 
-// POST /api/matches/undo/:petId — cancel a like within its 5s undo window.
-// Deletes the pending swipe (the profile becomes swipeable again), cancels the
-// scheduled commit, and retracts the recipient's "someone liked you" notification
-// both from the DB and live from their open Notifications panel.
-// Premium-gated (Undo Like): free users still see the snackbar/button in the
-// UI (that's a frontend concern, unchanged), but the actual undo is rejected
-// here -- the pending like still commits normally on its own 5s timer either way.
+// POST /api/matches/undo/:petId — cancel a fresh left/right swipe within its
+// 5s undo window. Premium-gated (Undo Like): free users still see the
+// snackbar/button (frontend concern, unchanged), but the actual undo is
+// rejected here -- the swipe still commits normally on its own 5s timer.
 router.post('/undo/:petId', rateLimiter(config.RATE_LIMIT.POST), async (req, res) => {
   try {
     const io = req.app.get('io');
@@ -195,9 +167,9 @@ router.post('/undo/:petId', rateLimiter(config.RATE_LIMIT.POST), async (req, res
     const targetPetId = parseInt(req.params.petId, 10);
     if (isNaN(targetPetId)) return res.status(400).json({ error: 'INVALID_ID' });
 
-    const undone = await MatchRepo.undoLike(myPet.id, targetPetId);
+    const undone = await MatchRepo.undoPendingSwipeAction(myPet.id, targetPetId);
     if (!undone) {
-      return res.status(410).json({ error: 'TOO_LATE', message: 'This like has already been confirmed and can no longer be undone.' });
+      return res.status(410).json({ error: 'TOO_LATE', message: 'This action has already been confirmed and can no longer be undone.' });
     }
 
     const timer = pendingCommitTimers.get(undone.swipeId);
@@ -223,7 +195,9 @@ router.post('/undo/:petId', rateLimiter(config.RATE_LIMIT.POST), async (req, res
   }
 });
 
-// POST /api/matches/decline/:petId — swipe left
+// POST /api/matches/decline/:petId — swipe left. Same pending/undo/absorbed
+// treatment as swipe-right, just resulting in a 30-day rejection cooldown
+// instead of a request. No notification is ever sent for a decline.
 router.post('/decline/:petId', rateLimiter(config.RATE_LIMIT.POST), async (req, res) => {
   try {
     const myPet = await PetRepo.getActivePet(req.user.id);
@@ -232,8 +206,85 @@ router.post('/decline/:petId', rateLimiter(config.RATE_LIMIT.POST), async (req, 
     const targetPetId = parseInt(req.params.petId, 10);
     if (isNaN(targetPetId)) return res.status(400).json({ error: 'INVALID_ID' });
 
-    await MatchRepo.swipe(myPet.id, targetPetId, 'decline');
-    res.json({ success: true });
+    const result = await MatchRepo.createPendingSwipeAction(myPet.id, targetPetId, 'rejected');
+    if (result.type === 'absorbed') {
+      return res.json({ success: true, absorbed: true });
+    }
+
+    const timer = setTimeout(() => commitPendingSwipeAction(result.swipeId), UNDO_WINDOW_MS);
+    pendingCommitTimers.set(result.swipeId, timer);
+
+    res.json({ success: true, swipeId: result.swipeId, undoWindowMs: UNDO_WINDOW_MS });
+  } catch (err) {
+    sendServerError(res, err);
+  }
+});
+
+// POST /api/matches/pending/:petId/respond — Accept/Reject an INCOMING
+// request from the Pending tab. :petId is the ORIGINAL REQUESTER's pet id.
+// Shares the exact same accept/reject business logic as the notification's
+// own buttons (POST /notifications/match-request/:id/respond) via
+// MatchRepo.acceptMeetRequest/rejectMeetRequest -- resolving from either
+// surface keeps both in sync.
+router.post('/pending/:petId/respond', rateLimiter(config.RATE_LIMIT.POST), async (req, res) => {
+  try {
+    const { action } = req.body; // 'accept' | 'decline'
+    if (!['accept', 'decline'].includes(action)) {
+      return res.status(400).json({ error: 'INVALID_ACTION', message: 'action must be accept or decline' });
+    }
+
+    const myPet = await PetRepo.getActivePet(req.user.id);
+    if (!myPet) return res.status(400).json({ error: 'NO_PET', message: 'Create a pet profile first' });
+
+    const requesterPetId = parseInt(req.params.petId, 10);
+    if (isNaN(requesterPetId)) return res.status(400).json({ error: 'INVALID_ID' });
+
+    const io = req.app.get('io');
+
+    if (action === 'accept') {
+      const result = await MatchRepo.acceptMeetRequest(myPet.id, requesterPetId);
+      if (!result.matched) {
+        return res.status(410).json({ error: 'EXPIRED', message: 'This request is no longer available.' });
+      }
+      if (result.notificationId) {
+        await NotificationRepo.markActionStatus(result.notificationId, 'accepted');
+        if (io) {
+          io.to(`user_${req.user.id}`).emit('notification_updated', {
+            notification: await NotificationRepo.findById(result.notificationId),
+          });
+        }
+      }
+      if (io) {
+        const requesterPet = await PetRepo.findById(requesterPetId);
+        if (requesterPet) await notifyMeetMatch(io, result.matchId, myPet, requesterPet);
+      }
+      return res.json({ success: true, matched: true, matchId: result.matchId });
+    }
+
+    const result = await MatchRepo.rejectMeetRequest(myPet.id, requesterPetId);
+    if (!result.rejected) {
+      return res.status(410).json({ error: 'EXPIRED', message: 'This request is no longer available.' });
+    }
+    if (result.notificationId) {
+      await NotificationRepo.markActionStatus(result.notificationId, 'declined');
+      if (io) {
+        io.to(`user_${req.user.id}`).emit('notification_updated', {
+          notification: await NotificationRepo.findById(result.notificationId),
+        });
+      }
+    }
+    // No notification sent to the requester -- silent, per spec -- but their
+    // device still needs to drop the resolved entry from Requested live.
+    if (io) {
+      const requesterPet = await PetRepo.findById(requesterPetId);
+      if (requesterPet) {
+        io.to(`user_${requesterPet.user_id}`).emit('meet_request_declined', {
+          fromPetId: requesterPetId,
+          toPetId: myPet.id,
+        });
+      }
+    }
+    res.json({ success: true, matched: false });
   } catch (err) {
     sendServerError(res, err);
   }

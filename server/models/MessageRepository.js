@@ -148,7 +148,12 @@ class MessageRepository extends BaseRepository {
     let match = await db.get('SELECT id FROM matches WHERE (pet1_id = ? AND pet2_id = ?) OR (pet1_id = ? AND pet2_id = ?)', [petId1, petId2, petId2, petId1]);
 
     if (!match) {
-      const matchResult = await db.run('INSERT INTO matches (pet1_id, pet2_id) VALUES (?, ?) RETURNING id', [petId1, petId2]);
+      // source='chat' distinguishes this incidental conversation-linkage row
+      // from a real Meet match (source='meet', created by MatchRepository) --
+      // Meet's "Accepted" list and getExcludedMeetPetIds's permanent-match
+      // exclusion both filter on source='meet' so a pet you only ever
+      // messaged directly is never mistaken for a Meet match.
+      const matchResult = await db.run("INSERT INTO matches (pet1_id, pet2_id, source) VALUES (?, ?, 'chat') RETURNING id", [petId1, petId2]);
       match = { id: matchResult.rows[0].id };
     }
 

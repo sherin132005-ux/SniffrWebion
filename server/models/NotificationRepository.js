@@ -103,23 +103,39 @@ class NotificationRepository extends BaseRepository {
     return result.rows[0] || null;
   }
 
+  // Writes the past-tense action_status the UI actually checks for
+  // ('accepted'/'declined') -- NOT the bare verb from a request body
+  // ('accept'/'decline'), which previously caused an accepted request to
+  // mis-render as "Request Declined" in NotificationsPanel.jsx.
+  async markActionStatus(notificationId, actionStatus) {
+    await db.run('UPDATE notifications SET action_status = ?, is_read = 1 WHERE id = ?', [actionStatus, notificationId]);
+    return this.findById(notificationId);
+  }
+
+  // Accept/Reject pressed directly on a "sniff request" notification card.
+  // Delegates the actual state-machine work to MatchRepository so this path
+  // and the Pending-tab's POST /matches/pending/:petId/respond share one
+  // implementation -- neither duplicates the other's business logic.
   async respondToMatchRequest(notificationId, userId, action) {
     const notif = await db.get('SELECT * FROM notifications WHERE id = ? AND user_id = ?', [notificationId, userId]);
-    if (!notif) return null;
+    if (!notif || !notif.sender_pet_id) return null;
 
-    await db.run('UPDATE notifications SET action_status = ?, is_read = 1 WHERE id = ?', [action, notificationId]);
+    const activePet = await PetRepo.getActivePet(userId);
+    if (!activePet) return null;
 
-    let matchResult = null;
-    if (action === 'accept' && notif.sender_pet_id) {
-      const activePet = await PetRepo.getActivePet(userId);
-      if (activePet) {
-        matchResult = await MatchRepo.swipe(activePet.id, notif.sender_pet_id, 'like');
-      }
+    let matchResult;
+    if (action === 'accept') {
+      matchResult = await MatchRepo.acceptMeetRequest(activePet.id, notif.sender_pet_id);
+      await this.markActionStatus(notificationId, matchResult.matched ? 'accepted' : 'declined');
+    } else {
+      matchResult = await MatchRepo.rejectMeetRequest(activePet.id, notif.sender_pet_id);
+      await this.markActionStatus(notificationId, 'declined');
     }
 
     return {
       notification: await this.findById(notificationId),
       matchResult,
+      requesterPetId: notif.sender_pet_id,
     };
   }
 

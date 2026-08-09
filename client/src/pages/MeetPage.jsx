@@ -485,11 +485,13 @@ export default function MeetPage() {
   };
 
   // Only one snackbar at a time: re-swiping before the previous one dismisses
-  // just replaces it (and restarts the 5s clock for the new like).
-  const showUndoSnackbar = (likedPet) => {
+  // just replaces it (and restarts the 5s clock for the new action). Stores
+  // the FULL pet object (not just id/name) so a successful undo can splice
+  // it straight back into the live deck -- see handleUndoLike.
+  const showUndoSnackbar = (pet) => {
     if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
     if (undoHideTimerRef.current) clearTimeout(undoHideTimerRef.current);
-    setUndoSnackbar({ petId: likedPet.id, petName: likedPet.name });
+    setUndoSnackbar({ pet });
     setUndoVisible(true);
     undoTimerRef.current = setTimeout(() => {
       setUndoVisible(false);
@@ -506,18 +508,27 @@ export default function MeetPage() {
 
   // The 5s commit timer lives server-side (matches.js), so this can fail
   // safely (e.g. TOO_LATE) without leaving the UI or backend inconsistent --
-  // the like just stands as a normal committed like. Free users always see
-  // the snackbar/button (unchanged) -- the server is what actually decides
-  // whether the undo goes through; a free user's tap surfaces the upsell.
+  // the swipe just stands as a normal committed action. Free users always
+  // see the snackbar/button (unchanged) -- the server is what actually
+  // decides whether the undo goes through; a free user's tap surfaces the
+  // upsell. On success, Premium Undo restores the pet to the TOP of the
+  // live stack immediately (not just the next server fetch) by splicing it
+  // back into `pets` at the current position.
   const handleUndoLike = async () => {
     if (!undoSnackbar) return;
-    const petId = undoSnackbar.petId;
+    const pet = undoSnackbar.pet;
     dismissUndoSnackbar();
     try {
-      await api.post(`/matches/undo/${petId}`);
+      await api.post(`/matches/undo/${pet.id}`);
       setSwipedIds(prev => {
         const next = new Set(prev);
-        next.delete(petId);
+        next.delete(pet.id);
+        return next;
+      });
+      setPets(prev => {
+        if (prev.some(p => p.id === pet.id)) return prev;
+        const next = [...prev];
+        next.splice(currentIndex, 0, pet);
         return next;
       });
       loadActivity();
@@ -564,12 +575,16 @@ export default function MeetPage() {
     const likedPet = currentPet;
 
     try {
-      // Likes now go through a 5s server-side pending window (Undo Like), so
-      // matching never happens synchronously here -- see the real-time
-      // "new_match" notification handler below for how a match actually surfaces.
-      await api.post(`/matches/like/${likedPet.id}`);
+      // A swipe right sends ONE pending sniff request -- it is never itself
+      // an Accept, so no match forms here. If the target already has a live
+      // request out to us, the backend silently absorbs this swipe (no new
+      // row, nothing to undo) rather than creating a duplicate/contradictory
+      // request -- see MatchRepository.createPendingSwipeAction.
+      const res = await api.post(`/matches/like/${likedPet.id}`);
       setSwipedIds(prev => new Set(prev).add(likedPet.id));
-      showUndoSnackbar(likedPet);
+      if (!res?.absorbed) {
+        showUndoSnackbar(likedPet);
+      }
       loadActivity();
     } catch (err) {
       console.error('Like failed:', err);
@@ -588,9 +603,18 @@ export default function MeetPage() {
     setSwipeDirection('left');
     maybeShowAd();
 
+    const declinedPet = currentPet;
+
     try {
-      await api.post(`/matches/decline/${currentPet.id}`);
-      setSwipedIds(prev => new Set(prev).add(currentPet.id));
+      // Same pending/absorbed treatment as swipe-right, just resulting in a
+      // 30-day rejection cooldown instead of a request -- see
+      // MatchRepository.createPendingSwipeAction. Undo now applies to left
+      // swipes too, matching right swipe.
+      const res = await api.post(`/matches/decline/${declinedPet.id}`);
+      setSwipedIds(prev => new Set(prev).add(declinedPet.id));
+      if (!res?.absorbed) {
+        showUndoSnackbar(declinedPet);
+      }
       loadActivity();
     } catch (err) {
       console.error('Decline failed:', err);
@@ -602,14 +626,14 @@ export default function MeetPage() {
     }, 400);
   };
 
-  // ── Pending List Actions ──────────────────────────────────
+  // ── Pending List Actions ────────────────────────────────────
+  // Explicit Accept/Reject of an INCOMING request -- distinct from a fresh
+  // swipe, and instant/final (no undo window; see plan D7). Shares its
+  // state-machine logic server-side with the notification's own
+  // Accept/Reject buttons via MatchRepository.acceptMeetRequest/rejectMeetRequest.
   const handleAcceptPending = async (petId) => {
     try {
-      await api.post(`/matches/like/${petId}`);
-      // Same 5s undo window as a card swipe -- surface it here too so
-      // accepting from the Pending list is undoable, not silently committed.
-      const pendingPet = activity.pending.find(p => p.pet_id === petId);
-      showUndoSnackbar({ id: petId, name: pendingPet?.name || 'them' });
+      await api.post(`/matches/pending/${petId}/respond`, { action: 'accept' });
       loadActivity();
     } catch (err) {
       console.error('Accept pending failed:', err);
@@ -618,7 +642,7 @@ export default function MeetPage() {
 
   const handleDeclinePending = async (petId) => {
     try {
-      await api.post(`/matches/decline/${petId}`);
+      await api.post(`/matches/pending/${petId}/respond`, { action: 'decline' });
       loadActivity(); // Silently removes from list immediately
     } catch (err) {
       console.error('Decline pending failed:', err);
@@ -643,17 +667,35 @@ export default function MeetPage() {
     advanceCard();
   };
 
-  // ── Real-time match updates on Meet page ───────────────────
+  // ── Real-time match/request updates on Meet page ───────────────────
+  // No manual reload is ever required for Pending/Requested/Accepted/Meet
+  // card visibility -- the side that performed an action gets its own state
+  // synchronously from the API response; this effect covers the OTHER
+  // device, which never made that call. See plan D8.
   useEffect(() => {
     if (!socket) return;
     const handleMatchUpdate = async (data) => {
+      if (data?.notification?.type === 'match_request') {
+        // A new sniff request just arrived for us -- refresh Pending live,
+        // and drop the sender from our own local deck if it happened to
+        // already be loaded (they're now excluded from discovery both ways).
+        loadActivity();
+        const senderId = data.notification.sender_pet_id;
+        if (senderId) {
+          setPets(prev => prev.filter(p => p.id !== senderId));
+        }
+        return;
+      }
+
       if (data?.notification?.type === 'new_match' || data?.notification?.action_status === 'accepted') {
         setMatchToast(`🐾 ${data.notification.title}`);
         setTimeout(() => setMatchToast(null), 4000);
+        loadActivity();
 
-        // A like now only ever turns into a match asynchronously (after the 5s
-        // undo window commits server-side), so the celebration modal that used
-        // to fire synchronously in handleSwipeRight is now driven from here instead.
+        // A match only ever forms from an explicit Accept (never a fresh
+        // swipe), so the celebration modal is always driven from here,
+        // regardless of whether Accept was pressed on this device or the
+        // other one.
         const matchedPetId = data.notification.sender_pet_id;
         if (matchedPetId) {
           try {
@@ -678,8 +720,20 @@ export default function MeetPage() {
         setTimeout(() => setMatchToast(null), 3000);
       }
     };
+
+    // Silent -- a rejected request never sends a visible notification, but
+    // the requester's own Requested list still needs to drop the resolved
+    // entry live rather than waiting for a manual refresh.
+    const handleRequestDeclined = () => {
+      loadActivity();
+    };
+
     socket.on('notification_received', handleMatchUpdate);
-    return () => socket.off('notification_received', handleMatchUpdate);
+    socket.on('meet_request_declined', handleRequestDeclined);
+    return () => {
+      socket.off('notification_received', handleMatchUpdate);
+      socket.off('meet_request_declined', handleRequestDeclined);
+    };
   }, [socket]);
 
   // ── Swipe card transform ───────────────────────────────────

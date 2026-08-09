@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { authenticateAccess } from '../middleware/auth.js';
 import NotificationRepo from '../models/NotificationRepository.js';
 import PetRepo from '../models/PetRepository.js';
-import { sendRealtimeNotification } from '../socket/notifications.js';
+import { notifyMeetMatch } from '../services/meetNotifications.js';
 import { sendServerError } from '../utils/errors.js';
 
 const router = Router();
@@ -55,7 +55,12 @@ router.post('/read-all', async (req, res) => {
 });
 
 // POST /api/notifications/match-request/:id/respond
-// Handles Accept/Decline pressed directly on a "New Match Request" notification card.
+// Handles Accept/Reject pressed directly on a sniff-request notification
+// card. Shares its actual state-machine logic with
+// POST /matches/pending/:petId/respond via
+// MatchRepository.acceptMeetRequest/rejectMeetRequest (see
+// NotificationRepository.respondToMatchRequest) -- this route only owns the
+// HTTP shape and the resulting notification fan-out.
 router.post('/match-request/:id/respond', async (req, res) => {
   try {
     const { action } = req.body; // 'accept' | 'decline'
@@ -66,39 +71,28 @@ router.post('/match-request/:id/respond', async (req, res) => {
     const result = await NotificationRepo.respondToMatchRequest(parseInt(req.params.id, 10), req.user.id, action);
     if (!result) return res.status(404).json({ error: 'NOT_FOUND' });
 
-    // If accepting created a real mutual match, notify BOTH users with "It's a Match"
-    if (action === 'accept' && result.matchResult?.matched) {
-      const io = req.app.get('io');
-      const myPet = await PetRepo.getActivePet(req.user.id);
-      const senderPetId = result.notification?.sender_pet_id;
-      const senderPet = senderPetId ? await PetRepo.findById(senderPetId) : null;
+    if (result.matchResult && !result.matchResult.matched && !result.matchResult.rejected) {
+      return res.status(410).json({ error: 'EXPIRED', message: 'This request is no longer available.' });
+    }
 
-      if (io && myPet) {
-        if (senderPet) {
-          sendRealtimeNotification(io, senderPet.user_id, {
-            category: 'matches',
-            type: 'new_match',
-            title: "It's a Match! 🎉",
-            description: `You and ${myPet.name} matched! Start chatting.`,
-            avatarUrl: myPet.avatar_url,
-            targetId: String(result.matchResult.matchId),
-            senderPetId: myPet.id,
-            actionStatus: 'accepted',
-          });
-        }
-        await sendRealtimeNotification(io, req.user.id, {
-          category: 'matches',
-          type: 'new_match',
-          title: "It's a Match! 🎉",
-          description: `You and ${senderPet?.name || 'your playmate'} matched! Start chatting.`,
-          avatarUrl: senderPet?.avatar_url,
-          targetId: String(result.matchResult.matchId),
-          senderPetId: senderPetId,
-          actionStatus: 'accepted',
+    const io = req.app.get('io');
+    if (io) {
+      const myPet = await PetRepo.getActivePet(req.user.id);
+      const requesterPet = result.requesterPetId ? await PetRepo.findById(result.requesterPetId) : null;
+
+      if (action === 'accept' && result.matchResult?.matched && myPet && requesterPet) {
+        // Notifies BOTH users -- "🐾 The sniff was mutual!" -- one shared implementation.
+        await notifyMeetMatch(io, result.matchResult.matchId, myPet, requesterPet);
+      } else if (action === 'decline' && requesterPet) {
+        // No visible notification is ever sent on reject (per spec) -- this is a
+        // silent, non-notification socket signal purely so the requester's own
+        // device drops the resolved entry from Requested without a manual reload.
+        io.to(`user_${requesterPet.user_id}`).emit('meet_request_declined', {
+          fromPetId: result.requesterPetId,
+          toPetId: myPet?.id,
         });
       }
     }
-    // Decline: no notification sent to anyone (matches spec)
 
     const unreadCount = await NotificationRepo.getUnreadCount(req.user.id);
     res.json({ success: true, ...result, unreadCount });

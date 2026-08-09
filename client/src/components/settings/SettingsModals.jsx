@@ -1617,25 +1617,27 @@ export default function SettingsModals({ activeModal, onClose, onOpenModal }) {
               <div className="p-4 bg-primary/5 rounded-2xl border border-primary/20 space-y-2">
                 <div className="flex justify-between items-center">
                   <span className="text-xs font-extrabold text-primary">v1.0.0 — Official Launch 🚀</span>
-                  <span className="text-[10px] text-zinc-400 font-semibold">July 2026</span>
+                  <span className="text-[10px] text-zinc-400 font-semibold">August 2026</span>
                 </div>
                 <ul className="text-xs text-zinc-600 dark:text-zinc-300 space-y-1 list-disc pl-4">
-                  <li>Multi-Pet Profile switching (up to 5 profiles)</li>
-                  <li>Modern slide-out settings panel</li>
-                  <li>Spotlight local & city leaderboards</li>
-                  <li>Interactive audio/video pet calls</li>
-                  <li>PawCircles pet communities</li>
+                  <li>🐾 Create up to 5 Pet Profiles and switch between them anytime.</li>
+                  <li>💘 Meet Nearby Pets based on your preferred distance and location.</li>
+                  <li>📸 Share Photos & Videos with the Sniffr community.</li>
+                  <li>❤️ Lick & React to posts using unique pet-themed reactions.</li>
+                  <li>👥 Join PawCircles to connect with pet lovers and communities.</li>
+                  <li>📞 Audio & Video Calls for seamless conversations.</li>
+                  <li>🏆 Discover the Most-Loved Pets Near You with Spotlight.</li>
                 </ul>
               </div>
 
               <div className="p-4 bg-zinc-50 dark:bg-zinc-800/40 rounded-2xl border border-zinc-100 dark:border-zinc-800 space-y-2">
                 <div className="flex justify-between items-center">
                   <span className="text-xs font-extrabold text-on-surface">v0.9.0 — Beta Preview</span>
-                  <span className="text-[10px] text-zinc-400 font-semibold">June 2026</span>
+                  <span className="text-[10px] text-zinc-400 font-semibold">July 2026</span>
                 </div>
                 <ul className="text-xs text-zinc-500 space-y-1 list-disc pl-4">
-                  <li>Initial feed posting and pawsitive score system</li>
-                  <li>1-on-1 messaging & media sharing</li>
+                  <li>🧪 Initial pet matching, feed, and profile experience.</li>
+                  <li>💬 Core messaging and community features.</li>
                 </ul>
               </div>
             </div>
