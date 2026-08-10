@@ -281,8 +281,8 @@ router.post('/:id/members/:userId/role', async (req, res) => {
 
 router.post('/:id/leave', async (req, res) => {
   try {
-    await CommunityRepo.leave(req.params.id, req.user.id);
-    res.json({ success: true });
+    const result = await CommunityRepo.leave(req.params.id, req.user.id);
+    res.json({ success: true, deleted: !!result.deleted });
   } catch (err) {
     sendServerError(res, err);
   }

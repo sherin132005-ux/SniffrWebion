@@ -25,6 +25,7 @@ import privacyRoutes from './routes/privacy.js';
 import communityRoutes from './routes/communities.js';
 import notificationRoutes from './routes/notifications.js';
 import premiumRoutes from './routes/premium.js';
+import ratingRoutes from './routes/ratings.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -79,6 +80,7 @@ async function start() {
   app.use('/api/communities', communityRoutes);
   app.use('/api/notifications', notificationRoutes);
   app.use('/api/premium', premiumRoutes);
+  app.use('/api/ratings', ratingRoutes);
 
   // Root route
   app.get('/', (req, res) => {

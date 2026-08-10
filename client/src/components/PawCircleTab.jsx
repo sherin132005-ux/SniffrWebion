@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
+import { PawClipDefs, PAW_CLIP_STYLE } from './PawShape';
 
 export default function PawCircleTab({ embedMode = true, searchQuery = '' }) {
   const { user, pet } = useAuth();
@@ -138,6 +139,7 @@ export default function PawCircleTab({ embedMode = true, searchQuery = '' }) {
   if (showAllRecommended) {
     return (
       <div className="space-y-6 animate-fade-in text-left">
+        <PawClipDefs />
         <header className="flex items-center justify-between py-4 border-b">
           <button
             onClick={() => setShowAllRecommended(false)}
@@ -157,7 +159,7 @@ export default function PawCircleTab({ embedMode = true, searchQuery = '' }) {
               onClick={() => navigate(`/community/${comm.id}`)}
               className="w-full bg-white dark:bg-zinc-900 hover:bg-zinc-50 p-4 rounded-2xl flex items-center gap-4 border border-outline-variant/10 shadow-sm transition-all hover-lift text-left"
             >
-              <img className="w-14 h-14 rounded-2xl object-cover" src={comm.cover_image || '/logo.png'} alt={comm.name} />
+              <img className="w-14 h-14 object-cover" style={{ clipPath: PAW_CLIP_STYLE }} src={comm.cover_image || '/logo.png'} alt={comm.name} />
               <div className="flex-1 min-w-0">
                 <h4 className="font-extrabold text-sm text-on-surface truncate flex items-center">
                   {comm.name}
@@ -177,7 +179,8 @@ export default function PawCircleTab({ embedMode = true, searchQuery = '' }) {
 
   return (
     <div className="w-full space-y-4 animate-fade-in text-left pb-8">
-      
+      <PawClipDefs />
+
       {/* SECTION 1: Recommended Packs */}
       {recommended.length > 0 && (
         <section className="animate-slide-up bg-white dark:bg-zinc-900 rounded-3xl p-4 border border-outline-variant/10 shadow-sm relative">
@@ -205,7 +208,7 @@ export default function PawCircleTab({ embedMode = true, searchQuery = '' }) {
                 <div className="relative">
                   <div className="w-[64px] h-[64px] rounded-[1.6rem] bg-gradient-to-tr from-rose-200 to-amber-200 p-[2.5px] shadow-sm group-active:scale-95 transition-transform hover-lift">
                     <div className="w-full h-full bg-white rounded-[1.4rem] p-0.5 overflow-hidden">
-                      <img className="w-full h-full object-cover rounded-[1.2rem]" src={comm.cover_image || '/logo.png'} alt={comm.name} loading="lazy" />
+                      <img className="w-full h-full object-cover animate-pulse-glow" style={{ clipPath: PAW_CLIP_STYLE }} src={comm.cover_image || '/logo.png'} alt={comm.name} loading="lazy" />
                     </div>
                   </div>
                   {getRecommendedBadge(comm)}
@@ -244,7 +247,7 @@ export default function PawCircleTab({ embedMode = true, searchQuery = '' }) {
                 onClick={() => navigate(`/community/${comm.id}`)}
                 className="w-full bg-zinc-50 dark:bg-zinc-800 hover:bg-zinc-100/50 p-3.5 rounded-2xl flex items-center gap-3.5 border border-transparent hover:border-primary/10 hover-lift transition-all shadow-sm active:scale-[0.98] text-left"
               >
-                <img className="w-12 h-12 rounded-2xl object-cover shadow-sm flex-shrink-0" src={comm.cover_image || '/logo.png'} alt={comm.name} />
+                <img className="w-12 h-12 object-cover shadow-sm flex-shrink-0" style={{ clipPath: PAW_CLIP_STYLE }} src={comm.cover_image || '/logo.png'} alt={comm.name} />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between mb-0.5">
                     <h4 className="font-extrabold text-xs text-on-surface truncate flex items-center">
@@ -306,7 +309,7 @@ export default function PawCircleTab({ embedMode = true, searchQuery = '' }) {
                 onClick={() => navigate(`/community/${comm.id}`)}
                 className="w-full bg-zinc-50 dark:bg-zinc-800 hover:bg-zinc-100/50 p-3.5 rounded-2xl flex items-center gap-3.5 border border-transparent hover:border-primary/10 hover-lift transition-all shadow-sm active:scale-[0.98] text-left"
               >
-                <img className="w-12 h-12 rounded-2xl object-cover shadow-sm flex-shrink-0" src={comm.cover_image || '/logo.png'} alt={comm.name} />
+                <img className="w-12 h-12 object-cover shadow-sm flex-shrink-0" style={{ clipPath: PAW_CLIP_STYLE }} src={comm.cover_image || '/logo.png'} alt={comm.name} />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between mb-0.5">
                     <h4 className="font-extrabold text-xs text-on-surface truncate flex items-center">

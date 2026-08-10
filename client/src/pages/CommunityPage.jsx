@@ -11,6 +11,8 @@ import useTypingSignal from '../hooks/useTypingSignal';
 import useMessageInteractions from '../hooks/useMessageInteractions';
 import TypingDots from '../components/chat/TypingDots';
 import { REACTION_EMOJIS, REACTION_LABELS } from '../constants/reactions';
+import { PawClipDefs, PAW_CLIP_STYLE } from '../components/PawShape';
+import MemberSniffCard from '../components/MemberSniffCard';
 
 // ─── Custom Voice Playback Component with Paw timeline ──────────
 function VoicePlayer({ audioUrl }) {
@@ -87,6 +89,8 @@ export default function CommunityPage() {
 
   const [community, setCommunity] = useState(null);
   const [activeSubTab, setActiveSubTab] = useState('chat'); // chat is default landing
+  const [myMatches, setMyMatches] = useState([]);
+  const [previewMember, setPreviewMember] = useState(null);
   const [inviteToast, setInviteToast] = useState(null);
   const [upsell, setUpsell] = useState(null); // { title, message } -- premium upsell modal
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -127,8 +131,10 @@ export default function CommunityPage() {
   const handleRetractCommunity = async () => {
     setRetracting(true);
     try {
-      await api.post(`/communities/${id}/leave`);
-      setInviteToast('Retracted from PawCircle.');
+      const res = await api.post(`/communities/${id}/leave`);
+      setInviteToast(res?.deleted
+        ? '🐾 You were the last member, so this PawCircle has been deleted.'
+        : 'Retracted from PawCircle.');
       setTimeout(() => navigate('/chat?tab=pawcircle'), 800);
     } catch (err) {
       console.error(err);
@@ -249,9 +255,20 @@ export default function CommunityPage() {
   const [pollAnonymous, setPollAnonymous] = useState(false);
 
   const chatBottomRef = useRef(null);
+  const chatScrollRef = useRef(null);
   const fileInputRef = useRef(null);
   const composerInputRef = useRef(null);
   const messageRefsMap = useRef({});
+
+  // Scrolls only the internal chat message pane -- setting scrollTop directly
+  // (rather than chatBottomRef.scrollIntoView, which was used before) never
+  // drags the surrounding page along with it, since scrollIntoView will also
+  // scroll ancestor containers when the target isn't fully in view.
+  const scrollChatToBottom = (smooth = true) => {
+    const el = chatScrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
+  };
 
   const [messageReactions, setMessageReactions] = useState({});
   const [replyingTo, setReplyingTo] = useState(null);
@@ -302,6 +319,13 @@ export default function CommunityPage() {
     }
   };
 
+  // Used to decide whether a member's full profile can be shown from inside
+  // the PawCircle -- only pets you're actually matched with unlock past the
+  // half-profile preview.
+  useEffect(() => {
+    api.get('/matches').then(res => setMyMatches(res?.matches || [])).catch(() => {});
+  }, []);
+
   useEffect(() => {
     loadCommunityDetails();
   }, [id]);
@@ -324,7 +348,7 @@ export default function CommunityPage() {
         if (msg.message_type === 'file') {
           setFiles(prev => [...prev, msg]);
         }
-        setTimeout(() => chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+        setTimeout(() => scrollChatToBottom(), 100);
       }
     };
 
@@ -441,7 +465,7 @@ export default function CommunityPage() {
       const fileMessages = (msgRes.messages || []).filter(m => m.message_type === 'file');
       setFiles(fileMessages);
 
-      setTimeout(() => chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+      setTimeout(() => scrollChatToBottom(false), 100);
     } catch (err) {
       console.error(err);
       setCommunity(null);
@@ -457,7 +481,14 @@ export default function CommunityPage() {
     try {
       const payload = { content: newMsg };
       if (replyingTo) payload.reply_to_id = replyingTo.id;
-      await api.post(`/communities/${id}/messages`, payload);
+      const res = await api.post(`/communities/${id}/messages`, payload);
+      // Show it immediately -- don't wait on the socket echo (join-room timing
+      // can lag right after mount, which used to mean the sender's own message
+      // only appeared after leaving and re-entering the community).
+      if (res && res.message) {
+        setMessages(prev => prev.some(m => m.id === res.message.id) ? prev : [...prev, res.message]);
+        scrollChatToBottom();
+      }
       setNewMsg('');
       setReplyingTo(null);
     } catch (err) {
@@ -491,21 +522,23 @@ export default function CommunityPage() {
     formData.append('content', file.name);
 
     try {
-      // Check if file is image/video or arbitrary document
-      const isImgVideo = ['image/jpeg', 'image/png', 'image/webp', 'video/mp4', 'video/quicktime', 'video/webm'].includes(file.type);
-      const endpoint = isImgVideo 
-        ? `/communities/${id}/messages` 
-        : `/communities/${id}/messages`; // standard community message upload endpoint
-
-      const res = await api.post(endpoint, formData);
+      const res = await api.post(`/communities/${id}/messages`, formData);
+      // The REST call already persisted the message and broadcast it to the
+      // room over sockets server-side -- appending locally here (instead of
+      // re-emitting another 'send_community_message' and reloading the whole
+      // page) avoids both a duplicate message row and the full-page reload
+      // that used to reset scroll position on every upload.
       if (res && res.message) {
-        // Emit socket message
-        const socket = getSocket();
-        socket?.emit('send_community_message', { communityId: parseInt(id), content: file.name, mediaUrl: res.message.media_url });
+        setMessages(prev => prev.some(m => m.id === res.message.id) ? prev : [...prev, res.message]);
+        if (res.message.message_type === 'file') {
+          setFiles(prev => [...prev, res.message]);
+        }
+        scrollChatToBottom();
       }
-      loadCommunityDetails();
     } catch (err) {
       console.error(err);
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
@@ -713,8 +746,10 @@ export default function CommunityPage() {
 
   return (
     <div className="bg-surface text-on-surface min-h-screen pt-24 lg:pt-8 px-4 lg:px-8 text-left max-w-lg mx-auto pb-24 animate-slide-up">
-      {/* Standard Navigation Header */}
-      <header className="flex items-center justify-between py-4 border-b border-outline-variant/10 mb-6">
+      <PawClipDefs />
+      {/* Unified header + tab bar card */}
+      <div className="bg-white dark:bg-zinc-900 rounded-[2rem] border border-outline-variant/10 shadow-sm mb-6 sticky top-24 lg:top-8 z-40">
+      <header className="flex items-center justify-between px-4 py-3">
         <button
           onClick={() => {
             if (activeSubTab !== 'chat' && isMember) {
@@ -799,7 +834,7 @@ export default function CommunityPage() {
       </header>
 
       {/* Tab bar */}
-      <div className="flex border-b border-zinc-100 dark:border-zinc-800 overflow-x-auto no-scrollbar py-2 gap-1.5 mb-6">
+      <div className="flex border-t border-zinc-100 dark:border-zinc-800 overflow-x-auto no-scrollbar px-3 py-2 gap-1.5">
         {[
           { id: 'chat', label: '💬 Chat', disabled: !isMember },
           { id: 'announcements', label: '📣 Pinned', disabled: !isMember },
@@ -821,12 +856,13 @@ export default function CommunityPage() {
           </button>
         ))}
       </div>
+      </div>
 
-      <div className="bg-white dark:bg-zinc-900 rounded-[2.5rem] p-6 shadow-sm border border-outline-variant/10 min-h-[460px]">
+      <div className={`bg-white dark:bg-zinc-900 rounded-[2.5rem] p-6 shadow-sm border border-outline-variant/10 ${activeSubTab === 'chat' ? 'h-[460px]' : ''}`}>
         {/* Chat tab (default view) */}
         {activeSubTab === 'chat' && isMember && (
-          <div className="flex flex-col h-[460px] justify-between">
-            <div className="flex-1 overflow-y-auto space-y-4 pr-1 no-scrollbar mb-4">
+          <div className="flex flex-col h-full justify-between">
+            <div ref={chatScrollRef} className="flex-1 overflow-y-auto space-y-4 pr-1 no-scrollbar mb-4">
               {/* announcements inside chat stream */}
               {announcements.slice(0, 1).map(ann => (
                 <div key={ann.id} className="bg-yellow-50 border border-yellow-100 rounded-2xl p-3 flex gap-2 items-start text-left shadow-sm">
@@ -1272,7 +1308,11 @@ export default function CommunityPage() {
                 const roleColors = { Owner: 'bg-yellow-100 text-yellow-800 border-yellow-200', Admin: 'bg-sky-100 text-sky-800 border-sky-200', Moderator: 'bg-purple-100 text-purple-800 border-purple-200', Member: 'bg-zinc-100 text-zinc-500 border-zinc-200' };
                 return (
                   <div key={member.id} className="flex items-center justify-between p-3 bg-white dark:bg-zinc-950 border rounded-2xl">
-                    <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setPreviewMember(member)}
+                      className="flex items-center gap-3 text-left active:scale-[0.98] transition-transform"
+                    >
                       <img className="w-10 h-10 rounded-full object-cover" src={member.pet_avatar || '/logo.png'} alt={member.pet_name} />
                       <div>
                         <h5 className="font-bold text-xs text-on-surface flex items-center gap-1.5">
@@ -1281,7 +1321,7 @@ export default function CommunityPage() {
                         </h5>
                         <p className="text-[9px] text-zinc-400">@{member.username}</p>
                       </div>
-                    </div>
+                    </button>
                     <div className="flex items-center gap-2">
                       <span className={`text-[8px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full border ${roleColors[member.role] || roleColors.Member}`}>
                         {member.role}
@@ -1309,7 +1349,12 @@ export default function CommunityPage() {
         {activeSubTab === 'details' && (
           <div className="space-y-5 text-left">
             <div className="flex flex-col items-center pb-4 border-b">
-              <img className="w-24 h-24 rounded-3xl object-cover shadow-md mb-3" src={community.cover_image || '/logo.png'} alt={community.name} />
+              <img
+                className="w-24 h-24 object-cover shadow-md mb-3 animate-pulse-glow hover-lift-lg"
+                style={{ clipPath: PAW_CLIP_STYLE }}
+                src={community.cover_image || '/logo.png'}
+                alt={community.name}
+              />
               <h4 className="font-black text-xl text-on-surface text-center flex items-center">
                 {community.name}
                 {renderCommunityBadges(community)}
@@ -1402,16 +1447,22 @@ export default function CommunityPage() {
       )}
 
       {/* Retract Confirmation Modal */}
-      {showRetractModal && (
+      {showRetractModal && (() => {
+        const isSoleOwner = isOwner && (community.member_count || 0) <= 1;
+        return (
         <div className="fixed inset-0 z-[250] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
           <div className="bg-white dark:bg-zinc-900 rounded-[2rem] p-6 max-w-sm w-full shadow-2xl border border-outline-variant/20 text-center space-y-4 animate-scale-up">
-            <div className="w-14 h-14 bg-amber-100 dark:bg-amber-950/50 text-amber-500 rounded-full flex items-center justify-center mx-auto text-2xl shadow-inner">
-              <span className="material-symbols-outlined">logout</span>
+            <div className={`w-14 h-14 rounded-full flex items-center justify-center mx-auto text-2xl shadow-inner ${isSoleOwner ? 'bg-rose-100 dark:bg-rose-950/50 text-rose-500' : 'bg-amber-100 dark:bg-amber-950/50 text-amber-500'}`}>
+              <span className="material-symbols-outlined">{isSoleOwner ? 'delete_forever' : 'logout'}</span>
             </div>
             <div>
-              <h3 className="font-extrabold text-base text-on-surface">Retract from PawCircle?</h3>
+              <h3 className="font-extrabold text-base text-on-surface">
+                {isSoleOwner ? 'This will delete your PawCircle' : 'Retract from PawCircle?'}
+              </h3>
               <p className="text-xs text-zinc-500 font-medium leading-relaxed mt-1">
-                You will leave this PawCircle completely and be removed from members. You can search and join again later.
+                {isSoleOwner
+                  ? `Since you're the owner and no other members are in "${community.name}", retracting will permanently delete this PawCircle — its chat, media, and announcements can't be recovered.`
+                  : 'You will leave this PawCircle completely and be removed from members. You can search and join again later.'}
               </p>
             </div>
             <div className="flex gap-2 pt-2">
@@ -1426,14 +1477,15 @@ export default function CommunityPage() {
                 type="button"
                 onClick={handleRetractCommunity}
                 disabled={retracting}
-                className="flex-1 py-3 bg-amber-600 hover:bg-amber-700 text-white font-extrabold text-xs rounded-xl transition-all shadow-md active:scale-95 uppercase tracking-wider disabled:opacity-50 cursor-pointer"
+                className={`flex-1 py-3 text-white font-extrabold text-xs rounded-xl transition-all shadow-md active:scale-95 uppercase tracking-wider disabled:opacity-50 cursor-pointer ${isSoleOwner ? 'bg-rose-600 hover:bg-rose-700' : 'bg-amber-600 hover:bg-amber-700'}`}
               >
-                {retracting ? 'Retracting...' : 'Retract'}
+                {retracting ? (isSoleOwner ? 'Deleting...' : 'Retracting...') : (isSoleOwner ? 'Delete Circle' : 'Retract')}
               </button>
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Report PawCircle Modal */}
       {showReportModal && (
@@ -1667,6 +1719,78 @@ export default function CommunityPage() {
         </div>
       )}
       </Portal>
+
+      {/* Member Profile -- full profile modal once you've connected on Meet */}
+      {previewMember && (previewMember.user_id === user?.id || myMatches.some(m => m.id === previewMember.pet_id)) && (
+        <Portal>
+        <div
+          className="fixed inset-0 z-[260] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in"
+          onClick={() => setPreviewMember(null)}
+        >
+          <div
+            className="bg-white dark:bg-zinc-900 rounded-[2.5rem] p-6 max-w-sm w-full shadow-2xl border border-outline-variant/20 text-center space-y-4 animate-scale-up relative"
+            onClick={e => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setPreviewMember(null)}
+              className="absolute top-4 right-4 w-8 h-8 rounded-full bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-zinc-400 hover:text-zinc-600 z-10"
+            >
+              <span className="material-symbols-outlined text-base">close</span>
+            </button>
+
+            <img
+              src={previewMember.pet_avatar || '/logo.png'}
+              alt={previewMember.pet_name}
+              className="w-24 h-24 rounded-full object-cover border-4 border-white dark:border-zinc-800 shadow-xl mx-auto animate-pulse-glow"
+            />
+
+            <div>
+              <h3 className="font-extrabold text-lg text-on-surface flex items-center justify-center gap-1.5">
+                <span>{previewMember.pet_name || previewMember.username}</span>
+                <PremiumBadge pet={previewMember} size="text-base" />
+              </h3>
+              <p className="text-xs text-zinc-400 font-bold">@{previewMember.username}</p>
+              <span className="inline-block mt-2 text-[8px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full border bg-zinc-100 dark:bg-zinc-800 text-zinc-500 border-zinc-200 dark:border-zinc-700">
+                {previewMember.role} of {community.name}
+              </span>
+            </div>
+
+            {previewMember.breed_name && (
+              <p className="text-[11px] font-bold text-zinc-500 uppercase tracking-wide">🐶 {previewMember.breed_name}</p>
+            )}
+            {previewMember.bio && (
+              <p className="text-xs text-zinc-500 leading-relaxed italic px-2">"{previewMember.bio}"</p>
+            )}
+            <button
+              type="button"
+              onClick={() => { setPreviewMember(null); if (previewMember.pet_id) navigate(`/profile/${previewMember.pet_id}`); }}
+              disabled={!previewMember.pet_id}
+              className="w-full py-3 bg-gradient-to-r from-primary to-primary-fixed-dim text-white font-extrabold text-xs rounded-full shadow-md active:scale-95 transition-transform uppercase tracking-wider disabled:opacity-50"
+            >
+              View Full Profile
+            </button>
+          </div>
+        </div>
+        </Portal>
+      )}
+
+      {/* Not connected yet -- swipeable "sniff" card (same translucent glass +
+          drag-to-swipe experience as Meet) instead of a locked preview.
+          Opening it notifies the member's owner that this pack member
+          sniffed their profile; swiping/tapping right or left sends a real
+          Meet connect/skip, same as the Meet deck. */}
+      {previewMember && !(previewMember.user_id === user?.id || myMatches.some(m => m.id === previewMember.pet_id)) && (
+        <Portal>
+          <MemberSniffCard
+            member={previewMember}
+            communityId={id}
+            onClose={() => setPreviewMember(null)}
+            onConnected={(m) => setInviteToast(`🐾 Sniff request sent to ${m.pet_name || 'them'}!`)}
+            onSkipped={() => setInviteToast('Swiped back.')}
+          />
+        </Portal>
+      )}
 
       {upsell && (
         <UpsellModal title={upsell.title} message={upsell.message} onClose={() => setUpsell(null)} />

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
+import { useSocket } from '../../context/SocketContext';
 import { usePremium } from '../../context/PremiumContext';
 import { getCurrentGPSLocation, getStoredLocation } from '../../services/locationService';
 
@@ -26,7 +27,8 @@ const BILLING_PAYMENT_ACTIONS = ['subscribed', 'renewed', 'upgraded', 'downgrade
 
 export default function SettingsModals({ activeModal, onClose, onOpenModal }) {
   const navigate = useNavigate();
-  const { pet: activePet, refreshProfile, logout } = useAuth();
+  const { user, pet: activePet, refreshProfile, logout } = useAuth();
+  const { socket } = useSocket();
   const { premium, refresh: refreshPremium } = usePremium();
 
   // Toast notification state
@@ -37,13 +39,13 @@ export default function SettingsModals({ activeModal, onClose, onOpenModal }) {
   const [passwordErrors, setPasswordErrors] = useState({});
   const [passwordLoading, setPasswordLoading] = useState(false);
 
-  // PawPrint 2FA states
-  const [pawCodeSent, setPawCodeSent] = useState(false);
-  const [pawCodeInput, setPawCodeInput] = useState('');
+  // PawPrint Verification (enable-by-email-link) states
+  const [pawLinkSent, setPawLinkSent] = useState(false);
   const [pawCodeLoading, setPawCodeLoading] = useState(false);
   const [pawCodeError, setPawCodeError] = useState('');
   const [pawCodeSuccess, setPawCodeSuccess] = useState('');
   const [resendTimer, setResendTimer] = useState(0);
+  const [verifyEmailSending, setVerifyEmailSending] = useState(false);
 
   // Forgot password state (img1)
   const [forgotIdentifier, setForgotIdentifier] = useState('');
@@ -62,6 +64,8 @@ export default function SettingsModals({ activeModal, onClose, onOpenModal }) {
 
   const [rating, setRating] = useState(5);
   const [ratingSubmitted, setRatingSubmitted] = useState(false);
+  const [ratingLoading, setRatingLoading] = useState(false);
+  const [ratingAggregate, setRatingAggregate] = useState(null); // { average, count }
 
   const [selectedPlan, setSelectedPlan] = useState('gold'); // 'plus' | 'gold' | 'platinum'
   const [upgradeStep, setUpgradeStep] = useState('plans'); // 'plans' | 'payment' | 'success'
@@ -119,6 +123,73 @@ export default function SettingsModals({ activeModal, onClose, onOpenModal }) {
     }
   }, [activeModal]);
 
+  // Reset the PawPrint modal to its initial step every time it's opened fresh
+  useEffect(() => {
+    if (activeModal === 'pawprint-2fa') {
+      setPawLinkSent(false);
+      setPawCodeError('');
+      setPawCodeSuccess('');
+      setResendTimer(0);
+    }
+  }, [activeModal]);
+
+  // If PawPrint gets enabled while this modal is open and waiting on the
+  // emailed link (e.g. the link was clicked in another tab), the live
+  // 'pawprint_enabled' socket event refreshes `user` app-wide -- close out
+  // this modal with a success toast the moment that lands, instead of
+  // leaving it stuck on "check your inbox".
+  useEffect(() => {
+    if (activeModal === 'pawprint-2fa' && pawLinkSent && user?.pawprint_2fa_enabled) {
+      showToast('🐾 PawPrint Verification enabled!');
+      onClose();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.pawprint_2fa_enabled, activeModal, pawLinkSent]);
+
+  // Rate Sniffr -- load the live aggregate + this user's own existing
+  // rating (if any) fresh each time the modal opens, so a user who already
+  // rated sees their stars pre-filled and "Update Rating" wording instead
+  // of being asked to rate again from scratch.
+  useEffect(() => {
+    if (activeModal !== 'rate-sniffr') return;
+    api.get('/ratings')
+      .then(res => {
+        setRatingAggregate({ average: res.average, count: res.count });
+        if (res.myRating) {
+          setRating(res.myRating);
+          setRatingSubmitted(true);
+        } else {
+          setRating(5);
+          setRatingSubmitted(false);
+        }
+      })
+      .catch(err => console.error('Failed to load rating:', err));
+  }, [activeModal]);
+
+  // Live aggregate updates -- fires for every connected user the instant
+  // anyone (including this one) submits a rating, per the "every user
+  // should immediately see the updated rating" requirement.
+  useEffect(() => {
+    if (!socket) return;
+    const onAggregateUpdated = (aggregate) => setRatingAggregate(aggregate);
+    socket.on('app_rating_updated', onAggregateUpdated);
+    return () => socket.off('app_rating_updated', onAggregateUpdated);
+  }, [socket]);
+
+  const handleSubmitRating = async () => {
+    setRatingLoading(true);
+    try {
+      const res = await api.post('/ratings', { rating });
+      setRatingAggregate({ average: res.average, count: res.count });
+      setRatingSubmitted(true);
+      showToast('🐾 Thanks for rating Sniffr!');
+    } catch (err) {
+      showToast(err.message || 'Failed to submit rating. Please try again.');
+    } finally {
+      setRatingLoading(false);
+    }
+  };
+
   // Fetch the real plan catalog / billing history fresh each time their
   // modal opens -- these are never mocked, always live from the server.
   useEffect(() => {
@@ -141,54 +212,42 @@ export default function SettingsModals({ activeModal, onClose, onOpenModal }) {
     setTimeout(() => setToast(null), 3000);
   };
 
-  // ── PawPrint 2FA Handlers ──
-  const handleSendPawCode = async () => {
+  // ── PawPrint Verification Handlers (enable-by-email-link) ──
+  // Sends "Verify & Enable PawPrint" link; the account email must already
+  // be verified (server enforces this too -- see EMAIL_NOT_VERIFIED below).
+  const handleSendPawLink = async () => {
     setPawCodeLoading(true);
     setPawCodeError('');
     try {
-      const res = await api.post('/auth/2fa/send-code');
-      setPawCodeSent(true);
-      setResendTimer(60);
-      showToast(res.message || 'Paw Code sent to your registered email.');
-    } catch (err) {
-      setPawCodeError(err.message || 'Failed to send Paw Code.');
-    } finally {
-      setPawCodeLoading(false);
-    }
-  };
-
-  const handleVerifyEnable = async (e) => {
-    if (e) e.preventDefault();
-    if (!pawCodeInput || !pawCodeInput.trim()) return;
-    setPawCodeLoading(true);
-    setPawCodeError('');
-    try {
-      const res = await api.post('/auth/2fa/verify-enable', { code: pawCodeInput });
-      setPawCodeSuccess(res.message || 'PawPrint Verification enabled successfully! 🐾');
-      await refreshProfile();
-      showToast('🐾 PawPrint Verification enabled!');
-      setTimeout(() => {
+      const res = await api.post('/auth/pawprint/send-verify-link');
+      if (res.alreadyEnabled) {
+        await refreshProfile();
+        showToast('🐾 PawPrint Verification is already enabled!');
         onClose();
-      }, 1200);
+        return;
+      }
+      setPawLinkSent(true);
+      setResendTimer(60);
+      showToast(res.message || 'Check your inbox for the PawPrint verification link.');
     } catch (err) {
-      setPawCodeError(err.message || 'The Paw Code is incorrect or has expired. Please try again.');
+      setPawCodeError(err.message || 'Failed to send verification email.');
     } finally {
       setPawCodeLoading(false);
     }
   };
 
-  const handleResendPawCode = async () => {
-    if (resendTimer > 0 || pawCodeLoading) return;
-    setPawCodeLoading(true);
+  // Reuses the existing account-email resend-verification endpoint --
+  // once that email is verified, the toggle re-checks and unlocks PawPrint.
+  const handleSendAccountVerification = async () => {
+    setVerifyEmailSending(true);
     setPawCodeError('');
     try {
-      const res = await api.post('/auth/2fa/resend-code');
-      setResendTimer(60);
-      showToast(res.message || 'A new Paw Code has been sent!');
+      const res = await api.post('/auth/resend-verification');
+      showToast(res.message || 'Verification email sent! Check your inbox.');
     } catch (err) {
-      setPawCodeError(err.message || 'Failed to resend Paw Code.');
+      setPawCodeError(err.message || 'Failed to send verification email.');
     } finally {
-      setPawCodeLoading(false);
+      setVerifyEmailSending(false);
     }
   };
 
@@ -420,60 +479,62 @@ export default function SettingsModals({ activeModal, onClose, onOpenModal }) {
                 </div>
               )}
 
-              {!pawCodeSent ? (
+              {!user?.email_verified ? (
+                // Gate: PawPrint needs a verified account email first. Reuses
+                // the existing account-verification email (not a PawPrint-
+                // specific one) since this step is about the account itself.
+                <div className="space-y-3 pt-1">
+                  <div className="p-3.5 bg-amber-50 border border-amber-200 text-amber-800 dark:bg-amber-950/30 dark:border-amber-900/40 dark:text-amber-200 rounded-xl text-xs font-bold flex items-start gap-2">
+                    <span className="material-symbols-outlined text-base mt-0.5">mail</span>
+                    <span>Verify your account email before enabling PawPrint Verification.</span>
+                  </div>
+                  <button
+                    onClick={handleSendAccountVerification}
+                    disabled={verifyEmailSending}
+                    className="w-full py-3.5 bg-primary hover:bg-primary/90 text-white font-extrabold text-xs rounded-xl shadow-md active:scale-95 transition-transform disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {verifyEmailSending ? (
+                      <span className="material-symbols-outlined text-base animate-spin">sync</span>
+                    ) : (
+                      <span>📧 Send Verification Email</span>
+                    )}
+                  </button>
+                  <p className="text-[10px] text-zinc-400 text-center">Already verified? Come back and toggle PawPrint on again.</p>
+                </div>
+              ) : !pawLinkSent ? (
                 <div className="pt-2">
                   <button
-                    onClick={handleSendPawCode}
+                    onClick={handleSendPawLink}
                     disabled={pawCodeLoading}
                     className="w-full py-3.5 bg-primary hover:bg-primary/90 text-white font-extrabold text-xs rounded-xl shadow-md active:scale-95 transition-transform disabled:opacity-50 flex items-center justify-center gap-2"
                   >
                     {pawCodeLoading ? (
                       <span className="material-symbols-outlined text-base animate-spin">sync</span>
                     ) : (
-                      <span>🐾 Send Paw Code</span>
+                      <span>🐾 Send Verification Email</span>
                     )}
                   </button>
                 </div>
               ) : (
-                <form onSubmit={handleVerifyEnable} className="space-y-4 pt-1">
-                  <div>
-                    <label className="block text-xs font-bold text-zinc-500 mb-1">Enter the 6-digit Paw Code sent to your email</label>
-                    <input
-                      type="text"
-                      maxLength="6"
-                      required
-                      value={pawCodeInput}
-                      onChange={(e) => setPawCodeInput(e.target.value.replace(/[^0-9]/g, ''))}
-                      placeholder="Enter the Paw Code"
-                      className="w-full px-4 py-3 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-sm font-extrabold text-center tracking-[0.3em] text-on-surface focus:outline-none focus:ring-2 focus:ring-primary"
-                    />
+                <div className="space-y-4 pt-1 text-center">
+                  <div className="p-4 bg-zinc-50 dark:bg-zinc-800 rounded-2xl">
+                    <p className="text-xs font-bold text-on-surface">Check your inbox 📬</p>
+                    <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-1">
+                      Click <strong>"Verify & Enable PawPrint"</strong> in the email we sent to {user?.email}. This page updates automatically once you do.
+                    </p>
                   </div>
 
                   <button
-                    type="submit"
-                    disabled={pawCodeLoading || pawCodeInput.length < 6}
-                    className="w-full py-3.5 bg-primary hover:bg-primary/90 text-white font-extrabold text-xs rounded-xl shadow-md active:scale-95 transition-transform disabled:opacity-50 flex items-center justify-center gap-2"
+                    type="button"
+                    onClick={handleSendPawLink}
+                    disabled={resendTimer > 0 || pawCodeLoading}
+                    className={`text-xs font-bold transition-colors ${
+                      resendTimer > 0 ? 'text-zinc-400 cursor-not-allowed' : 'text-primary hover:underline'
+                    }`}
                   >
-                    {pawCodeLoading ? (
-                      <span className="material-symbols-outlined text-base animate-spin">sync</span>
-                    ) : (
-                      <span>Verify & Enable</span>
-                    )}
+                    {resendTimer > 0 ? `Resend Email (${resendTimer}s)` : '🐾 Resend Email'}
                   </button>
-
-                  <div className="text-center pt-1">
-                    <button
-                      type="button"
-                      onClick={handleResendPawCode}
-                      disabled={resendTimer > 0 || pawCodeLoading}
-                      className={`text-xs font-bold transition-colors ${
-                        resendTimer > 0 ? 'text-zinc-400 cursor-not-allowed' : 'text-primary hover:underline'
-                      }`}
-                    >
-                      {resendTimer > 0 ? `Resend Code (${resendTimer}s)` : '🐾 Resend Code'}
-                    </button>
-                  </div>
-                </form>
+                </div>
               )}
             </div>
           </div>
@@ -1396,6 +1457,17 @@ export default function SettingsModals({ activeModal, onClose, onOpenModal }) {
               </button>
             </div>
 
+            {/* Live overall rating -- updates for every user the instant anyone rates */}
+            {ratingAggregate && ratingAggregate.count > 0 && (
+              <div className="flex items-center justify-center gap-1.5 text-amber-500">
+                <span className="text-lg font-extrabold">{ratingAggregate.average.toFixed(1)}</span>
+                <span className="text-base">⭐</span>
+                <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
+                  ({ratingAggregate.count.toLocaleString()} {ratingAggregate.count === 1 ? 'rating' : 'ratings'})
+                </span>
+              </div>
+            )}
+
             {ratingSubmitted ? (
               <div className="py-6 space-y-2">
                 <div className="text-4xl">❤️</div>
@@ -1425,10 +1497,11 @@ export default function SettingsModals({ activeModal, onClose, onOpenModal }) {
                 </div>
 
                 <button
-                  onClick={() => setRatingSubmitted(true)}
-                  className="w-full py-3 bg-amber-500 text-white font-extrabold text-xs rounded-xl shadow-md active:scale-95 transition-transform"
+                  onClick={handleSubmitRating}
+                  disabled={ratingLoading}
+                  className="w-full py-3 bg-amber-500 text-white font-extrabold text-xs rounded-xl shadow-md active:scale-95 transition-transform disabled:opacity-50 flex items-center justify-center gap-2"
                 >
-                  Submit Rating
+                  {ratingLoading ? <span className="material-symbols-outlined text-base animate-spin">sync</span> : <span>Submit Rating</span>}
                 </button>
               </>
             )}

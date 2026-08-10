@@ -217,11 +217,11 @@ export default function GalleryViewerModal({ posts = [], initialIndex = 0, petNa
 
             {/* Media */}
             {post.media_url && (
-              <div className="relative bg-black/5 flex items-center justify-center" style={{ maxHeight: '480px' }}>
+              <div className="relative bg-black/5 flex items-center justify-center" style={{ maxHeight: 'min(480px, 70vh)' }}>
                 {post.media_type === 'video' ? (
-                  <video src={post.media_url} controls className="w-full object-contain" style={{ maxHeight: '480px' }} />
+                  <video src={post.media_url} controls className="w-full max-h-full object-contain" style={{ maxHeight: 'min(480px, 70vh)' }} />
                 ) : (
-                  <img src={post.media_url} alt={post.caption || 'Memory'} className="w-full object-cover" style={{ maxHeight: '480px' }} />
+                  <img src={post.media_url} alt={post.caption || 'Memory'} className="w-full max-h-full object-contain" style={{ maxHeight: 'min(480px, 70vh)' }} />
                 )}
               </div>
             )}

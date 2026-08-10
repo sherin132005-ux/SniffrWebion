@@ -269,7 +269,7 @@ const [myPetId, setMyPetId] = useState(null);
 
     
       {/* Mobile header */}
-      <header className="lg:hidden bg-white/80 dark:bg-zinc-950/80 backdrop-blur-md shadow-[0_15px_40px_-15px_rgba(244,167,185,0.2)] fixed top-0 w-full z-50">
+      <header className="lg:hidden bg-white/80 dark:bg-zinc-950/80 backdrop-blur-md shadow-[0_15px_40px_-15px_rgba(244,167,185,0.2)] fixed top-0 left-0 right-0 md:left-20 z-50">
         <div className="flex justify-between items-center px-6 py-4">
           <button
             onClick={loadHistory}

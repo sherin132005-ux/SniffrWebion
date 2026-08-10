@@ -331,6 +331,17 @@ export function runMigrations() {
       metadata_json TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`,
+    // App rating (Settings -> Rate Sniffr). One row per user (UNIQUE) --
+    // resubmitting updates it in place instead of creating a duplicate.
+    // NOTE: runMigrations() is not invoked at startup (see file header) --
+    // this table must be created on the live Supabase DB by hand.
+    `CREATE TABLE IF NOT EXISTS app_ratings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+      rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`,
     `CREATE TABLE IF NOT EXISTS notification_preferences (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER UNIQUE REFERENCES users(id) ON DELETE CASCADE,
@@ -385,7 +396,18 @@ export function runMigrations() {
     `ALTER TABLE users ADD COLUMN paw_code TEXT`,
     `ALTER TABLE users ADD COLUMN paw_code_expires_at DATETIME`,
     `ALTER TABLE community_members ADD COLUMN cleared_at DATETIME`,
-    `ALTER TABLE community_members ADD COLUMN is_hidden INTEGER DEFAULT 0`
+    `ALTER TABLE community_members ADD COLUMN is_hidden INTEGER DEFAULT 0`,
+    // account email verification -- these three were previously live on
+    // Supabase but undocumented here; added for completeness
+    `ALTER TABLE users ADD COLUMN email_verified INTEGER DEFAULT 0`,
+    `ALTER TABLE users ADD COLUMN email_verify_token TEXT`,
+    `ALTER TABLE users ADD COLUMN email_verify_expires_at DATETIME`,
+    // PawPrint Verification enable-by-email-link (see routes/auth.js
+    // "PAWPRINT VERIFICATION — ENABLE-BY-EMAIL-LINK"). NOTE: runMigrations()
+    // is not invoked at startup (see file header) -- these two columns must
+    // be added to the live Supabase DB by hand before that feature works.
+    `ALTER TABLE users ADD COLUMN pawprint_verify_token_hash TEXT`,
+    `ALTER TABLE users ADD COLUMN pawprint_verify_expires_at DATETIME`
   ];
   alterations.forEach(sql => { try { db.exec(sql); } catch(e) { /* column already exists */ } });
 

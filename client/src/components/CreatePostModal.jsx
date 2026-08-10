@@ -250,11 +250,11 @@ export default function CreatePostModal({ onClose, onPostCreated }) {
         )}
 
         {preview && (
-          <div className="rounded-2xl overflow-hidden mb-4 shadow-sm border border-outline-variant/20 relative group bg-black/5">
+          <div className="rounded-2xl overflow-hidden mb-4 shadow-sm border border-outline-variant/20 relative group bg-black/5 flex items-center justify-center max-h-64">
             {file?.type?.startsWith('video/') ? (
-              <video src={preview} controls className="w-full h-48 object-contain" />
+              <video src={preview} controls className="w-full max-h-64 object-contain" />
             ) : (
-              <img src={preview} alt="Preview" className="w-full h-48 object-cover" />
+              <img src={preview} alt="Preview" className="w-full max-h-64 object-contain" />
             )}
             <button 
               onClick={() => { setFile(null); setPreview(null); }}

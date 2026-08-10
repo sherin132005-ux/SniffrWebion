@@ -458,6 +458,8 @@ export default function ChatPage() {
   const mediaInputRef = useRef(null);
   const fileInputRef = useRef(null);
   const searchRef = useRef(null);
+  const searchDebounceRef = useRef(null);
+  const searchRequestIdRef = useRef(0);
   const inputFieldRef = useRef(null);
   const [typingUsers, setTypingUsers] = useState({});
 const [failedMessages, setFailedMessages] = useState({});
@@ -671,6 +673,18 @@ const [messageReactions, setMessageReactions] = useState({});
 
   const handleSearchChange = (query) => {
     setSearchQuery(query);
+
+    // A plain onChange handler has no cleanup phase, so the previous
+    // pending timeout was never actually cancelled here -- typing fast used
+    // to fire an overlapping API call per keystroke, and whichever response
+    // landed LAST (not necessarily the one for the latest query) won and
+    // silently overwrote the results, including with results for a query
+    // that no longer matches what's in the box. Clearing the ref-held timer
+    // and tagging each request with an incrementing id fixes both: only one
+    // request is ever in flight from typing, and a late/out-of-order
+    // response for an old query is discarded instead of applied.
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+
     if (activeTab !== 'messages') return;
 
     if (!query.trim()) {
@@ -689,15 +703,18 @@ const [messageReactions, setMessageReactions] = useState({});
     }
 
     setSearchLoading(true);
-    const delay = setTimeout(async () => {
+    const requestId = ++searchRequestIdRef.current;
+    searchDebounceRef.current = setTimeout(async () => {
       try {
         const data = await api.get(`/chat/search?q=${encodeURIComponent(query)}`);
+        if (requestId !== searchRequestIdRef.current) return; // a newer keystroke superseded this
         setSearchResults(data.results || []);
-      } catch (err) { console.error(err); }
-      finally { setSearchLoading(false); }
+      } catch (err) {
+        console.error(err);
+      } finally {
+        if (requestId === searchRequestIdRef.current) setSearchLoading(false);
+      }
     }, 350);
-
-    return () => clearTimeout(delay);
   };
 
   const startNewConversation = async (recipientPetId) => {
@@ -1944,7 +1961,7 @@ className="w-10 h-10 rounded-full bg-surface-container-low hover:bg-emerald-100 
     <div className="w-full bg-surface text-on-surface min-h-screen pb-32 lg:pb-8 overflow-x-hidden" {...handlers}>
       <PawTrailIndicator />
 
-      <header className="lg:hidden bg-white/80 dark:bg-zinc-950/80 backdrop-blur-md shadow-[0_15px_40px_-15px_rgba(244,167,185,0.2)] fixed top-0 left-0 right-0 w-full z-50">
+      <header className="lg:hidden bg-white/80 dark:bg-zinc-950/80 backdrop-blur-md shadow-[0_15px_40px_-15px_rgba(244,167,185,0.2)] fixed top-0 left-0 right-0 md:left-20 z-50">
         <div className="flex justify-between items-center w-full px-6 py-4">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center">

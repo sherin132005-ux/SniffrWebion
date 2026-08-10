@@ -54,6 +54,7 @@ export default function ProfilePage() {
   const [showPawsitive, setShowPawsitive] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [showShareCard, setShowShareCard] = useState(false);
+  const [showLocationInfoModal, setShowLocationInfoModal] = useState(false);
   const [showSwitchPetModal, setShowSwitchPetModal] = useState(false);
   const [showSettingsPanel, setShowSettingsPanel] = useState(false);
   const [settingsInitialModal, setSettingsInitialModal] = useState(null);
@@ -69,6 +70,8 @@ export default function ProfilePage() {
   // below, so the effect that uses it stays a valid hook. Never written to
   // pet.location_text in the database; see the effect further down.
   const [liveLocationText, setLiveLocationText] = useState(null);
+  const [detectingLocation, setDetectingLocation] = useState(false);
+  const [locationError, setLocationError] = useState('');
 
   // Moved up from its old spot near the render return so the live-location
   // effect below (and any other hook) can read it -- hooks can't be
@@ -97,24 +100,21 @@ export default function ProfilePage() {
 
   // ── Live location detection (owner's own profile only) ─────────
   // Display-only "where you are right now" -- never written back to
-  // pet.location_text (the API is never called from here). Falls back
-  // silently to the saved location_text (already rendered) if permission
-  // is denied, unavailable, or the lookup fails/times out. Runs in the
-  // background after the initial render, so it never blocks the page.
+  // pet.location_text (the API is never called from here). Only fires
+  // silently on mount when permission was ALREADY granted in a past visit --
+  // it never calls requestSystemPermission itself. Several browsers (notably
+  // iOS Safari) silently ignore/timeout a geolocation prompt that wasn't
+  // triggered by a direct user gesture (a click), which is exactly why this
+  // used to fail to ever display: the request fired from this background
+  // effect, with no click behind it. Requesting the actual permission now
+  // only ever happens from handleDetectLiveLocation, wired to a button tap.
   useEffect(() => {
     if (!isOwner || !pet) return;
     let cancelled = false;
 
     (async () => {
       try {
-        // Check status first (no prompt) via the same permissionService
-        // used elsewhere in the app, so an already-granted/denied choice
-        // never re-prompts unnecessarily.
-        let status = await getCapabilityStatus('location');
-        if (status !== 'granted') {
-          if (status !== 'prompt') return; // previously denied -- don't re-prompt
-          status = await requestSystemPermission('location');
-        }
+        const status = await getCapabilityStatus('location');
         if (status !== 'granted' || cancelled) return;
 
         // Same GPS + reverse-geocode call the Edit Profile GPS button uses.
@@ -123,14 +123,46 @@ export default function ProfilePage() {
         const liveText = [loc.area, loc.city].filter(Boolean).join(', ');
         if (liveText) setLiveLocationText(liveText);
       } catch (err) {
-        // Denied, unsupported, or timed out -- saved location_text (or the
-        // "set your location" prompt) already rendered stays as-is.
+        // Unavailable or the lookup failed/timed out -- saved location_text
+        // (or the "set your location" prompt) already rendered stays as-is.
         console.warn('Live location detection unavailable:', err);
       }
     })();
 
     return () => { cancelled = true; };
   }, [isOwner, pet?.id]);
+
+  // ── Explicit "set/refresh my location" action ───────────────────
+  // Triggered directly by a button click (a real user gesture, required by
+  // some browsers for geolocation prompts to fire at all) -- requests
+  // permission if needed, reads GPS, reverse-geocodes, and updates the
+  // display immediately. This is the ONLY thing "Set your location" needs;
+  // it deliberately does not touch Edit Profile, since that form's saved
+  // location is a separate, rarely-changed field for matching, not this
+  // live "where are you right now" indicator.
+  const handleDetectLiveLocation = async () => {
+    setDetectingLocation(true);
+    setLocationError('');
+    try {
+      const status = await requestSystemPermission('location');
+      if (status !== 'granted') {
+        setLocationError('Location permission was not granted. You can allow it in your browser/device settings and try again.');
+        return;
+      }
+      const loc = await getCurrentGPSLocation();
+      const liveText = [loc.area, loc.city].filter(Boolean).join(', ');
+      if (liveText) {
+        setLiveLocationText(liveText);
+      } else {
+        setLocationError("Couldn't determine your area from that location. Please try again.");
+      }
+    } catch (err) {
+      console.warn('Live location detection failed:', err);
+      setLocationError('Could not access your location. Please try again.');
+    } finally {
+      setDetectingLocation(false);
+    }
+  };
 
   useEffect(() => {
     if (location.state) {
@@ -292,7 +324,7 @@ export default function ProfilePage() {
     <div className="bg-surface text-on-surface min-h-screen pb-32 lg:pb-8" {...handlers}>
       <PawTrailIndicator />
       {/* Mobile Header */}
-      <header className="lg:hidden fixed top-0 left-0 w-full z-50 flex items-center justify-between px-6 py-4 glass rounded-b-[2.5rem] shadow-[0_10px_30px_-15px_rgba(0,0,0,0.05)]">
+      <header className="lg:hidden fixed top-0 left-0 right-0 md:left-20 z-50 flex items-center justify-between px-6 py-4 glass rounded-b-[2.5rem] shadow-[0_10px_30px_-15px_rgba(0,0,0,0.05)]">
         <div className="flex items-center gap-3">
           {id ? (
             <button onClick={() => navigate(-1)} className="w-10 h-10 flex items-center justify-center bg-surface-container-low rounded-full active:scale-90 transition-transform">
@@ -303,7 +335,7 @@ export default function ProfilePage() {
               <span className="material-symbols-outlined text-primary text-xl" style={{ fontVariationSettings: "'FILL' 1" }}>pets</span>
             </div>
           )}
-          <h1 className="text-2xl font-bold tracking-tighter text-rose-800 dark:text-rose-100">
+          <h1 className="font-extrabold tracking-tighter text-2xl uppercase text-pink-400">
             {isOwner ? 'Sniffr' : pet?.name || 'Profile'}
           </h1>
         </div>
@@ -408,25 +440,46 @@ export default function ProfilePage() {
                     <span className="material-symbols-outlined text-[14px]">edit</span> Edit Details
                   </button>
                 )}
-                <div className="flex items-center gap-2 text-primary font-medium mb-4">
-                  <span className="material-symbols-outlined text-lg">location_on</span>
-                  {/* Owner's own profile: live GPS-detected location (if
-                      permission was granted) wins over the saved profile
-                      location -- display-only, never written back to
-                      pet.location_text. Falls back to the exact same chain
-                      as before once liveLocationText isn't available. */}
-                  {(isOwner && liveLocationText) || pet?.location_text ? (
-                    <span className="text-xs uppercase tracking-wider">{(isOwner && liveLocationText) || pet.location_text}</span>
-                  ) : isOwner ? (
-                    <button
-                      type="button"
-                      onClick={() => { setShowEdit(true); setInitialFocusField('location'); }}
-                      className="text-xs uppercase tracking-wider underline decoration-dotted hover:opacity-70 transition-opacity"
-                    >
-                      Set your location
-                    </button>
-                  ) : (
-                    <span className="text-xs uppercase tracking-wider">Location not set</span>
+                <div className="mb-4">
+                  <div className="flex items-center gap-2 text-primary font-medium">
+                    <span className="material-symbols-outlined text-lg">location_on</span>
+                    {/* Owner's own profile: live GPS-detected location (if
+                        permission was granted) wins over the saved profile
+                        location -- display-only, never written back to
+                        pet.location_text. Falls back to the exact same chain
+                        as before once liveLocationText isn't available. */}
+                    {(isOwner && liveLocationText) || pet?.location_text ? (
+                      <>
+                        <span className="text-xs uppercase tracking-wider">{(isOwner && liveLocationText) || pet.location_text}</span>
+                        {isOwner && (
+                          <button
+                            type="button"
+                            onClick={handleDetectLiveLocation}
+                            disabled={detectingLocation}
+                            title="Refresh my live location"
+                            className="text-zinc-400 hover:text-primary transition-colors disabled:opacity-50"
+                          >
+                            <span className={`material-symbols-outlined text-sm ${detectingLocation ? 'animate-spin' : ''}`}>
+                              {detectingLocation ? 'sync' : 'my_location'}
+                            </span>
+                          </button>
+                        )}
+                      </>
+                    ) : isOwner ? (
+                      <button
+                        type="button"
+                        onClick={() => setShowLocationInfoModal(true)}
+                        disabled={detectingLocation}
+                        className="text-xs uppercase tracking-wider underline decoration-dotted hover:opacity-70 transition-opacity disabled:opacity-50"
+                      >
+                        {detectingLocation ? 'Locating...' : 'Set your location'}
+                      </button>
+                    ) : (
+                      <span className="text-xs uppercase tracking-wider">Location not set</span>
+                    )}
+                  </div>
+                  {isOwner && locationError && (
+                    <p className="text-[10px] text-rose-500 font-medium mt-1 max-w-xs">{locationError}</p>
                   )}
                 </div>
                 {pet?.is_champion && (
@@ -665,6 +718,45 @@ export default function ProfilePage() {
                 className="flex-1 py-3 bg-gradient-to-r from-primary to-primary-fixed-dim text-white text-xs font-bold rounded-full shadow-lg active:scale-95 transition-transform"
               >
                 Download Card
+              </button>
+            </div>
+          </div>
+        </div>
+        </Portal>
+      )}
+
+      {showLocationInfoModal && (
+        <Portal>
+        <div
+          className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in"
+          onClick={() => setShowLocationInfoModal(false)}
+        >
+          <div
+            className="bg-white dark:bg-zinc-900 rounded-[2.5rem] p-6 max-w-sm w-full shadow-2xl relative border border-outline-variant/10 text-center animate-scale-up"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-primary/10 flex items-center justify-center animate-pulse-glow">
+              <span className="material-symbols-outlined text-primary text-3xl" style={{ fontVariationSettings: "'FILL' 1" }}>location_on</span>
+            </div>
+            <h3 className="font-extrabold text-lg text-on-surface mb-2">🐾 Find Friends Nearby</h3>
+            <p className="text-sm text-on-surface-variant leading-relaxed mb-6">
+              Setting your location helps Sniffr connect you with furry friends whenever they're nearby — so Meet, Spotlight, and PawCircles can all show you playmates close to home.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowLocationInfoModal(false)}
+                className="flex-1 py-3 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-on-surface text-xs font-bold rounded-full transition-colors"
+              >
+                Not Now
+              </button>
+              <button
+                onClick={() => {
+                  setShowLocationInfoModal(false);
+                  handleDetectLiveLocation();
+                }}
+                className="flex-1 py-3 bg-gradient-to-r from-primary to-primary-fixed-dim text-white text-xs font-bold rounded-full shadow-lg active:scale-95 transition-transform"
+              >
+                Allow Location Access
               </button>
             </div>
           </div>

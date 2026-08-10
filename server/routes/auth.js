@@ -11,13 +11,22 @@ import {
 } from '../middleware/auth.js';
 import { rateLimiter } from '../middleware/rateLimiter.js';
 import config from '../config.js';
-import { sendPawCodeEmail, sendPasswordResetEmail, sendVerificationEmail } from '../utils/mailer.js';
+import { sendPawCodeEmail, sendPasswordResetEmail, sendVerificationEmail, sendPawprintVerifyLinkEmail } from '../utils/mailer.js';
 import db from '../db/connection.js';
 import { grantLaunchOfferIfEligible, getUserWithFreshPlanState } from '../services/subscriptionService.js';
 import { sendServerError } from '../utils/errors.js';
+import { sendRealtimeNotification } from '../socket/notifications.js';
 
 const router = Router();
 router.use(rateLimiter(config.RATE_LIMIT.AUTH));
+
+// Verification/reset tokens are emailed as raw random hex, but only their
+// SHA-256 hash is ever persisted -- a DB read (backup leak, SQL injection,
+// etc.) can't be turned into a usable link, since the raw value that
+// satisfies the hash was never stored anywhere.
+function hashToken(token) {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
 
 function maskEmail(email) {
   if (!email || !email.includes('@')) return email || '';
@@ -112,23 +121,54 @@ async function triggerVerificationEmail(user, options = {}) {
   const cooldownUntil = now + VERIFICATION_COOLDOWN_MS;
   verificationCooldowns.set(user.id, now);
 
-  try {
-    const token = crypto.randomBytes(32).toString('hex');
-    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // 24 hours
-    await db.run(
-      'UPDATE users SET email_verify_token = ?, email_verify_expires_at = ? WHERE id = ?',
-      [token, expiresAt, user.id]
-    );
-    const verifyLink = `${config.CLIENT_URL || 'http://localhost:5173'}/verify-email?token=${token}`;
-    // Only printed when there's no real email provider to actually deliver
-    // it -- never logged once SMTP is configured. See AUDIT_REPORT.md.
-    if (!process.env.SMTP_USER) console.log(`[DEV ONLY] Email verification link for ${user.email}: ${verifyLink}`);
-    await sendVerificationEmail(user.email, verifyLink, { isWelcome, fullName: user.full_name });
-  } catch (err) {
-    console.error('[triggerVerificationEmail error]:', err.message);
-  }
+  // Fire-and-forget: the token write + actual email delivery happen in the
+  // background instead of being awaited by the caller. A slow or
+  // misconfigured SMTP connection (or a slow DNS/TCP handshake to the mail
+  // provider) used to block the ENTIRE signup/login response until it
+  // resolved or timed out -- the account was already committed to the DB
+  // by then, but the browser never got a response back to apply the
+  // session, which is exactly what looked like "saved in Supabase but the
+  // site never updated, had to refresh and log in".
+  (async () => {
+    try {
+      const token = crypto.randomBytes(32).toString('hex');
+      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // 24 hours
+      await db.run(
+        'UPDATE users SET email_verify_token = ?, email_verify_expires_at = ? WHERE id = ?',
+        [hashToken(token), expiresAt, user.id]
+      );
+      const verifyLink = `${config.CLIENT_URL || 'http://localhost:5173'}/verify-email?token=${token}`;
+      // Only printed when there's no real email provider to actually deliver
+      // it -- never logged once SMTP is configured. See AUDIT_REPORT.md.
+      if (!process.env.SMTP_USER) console.log(`[DEV ONLY] Email verification link for ${user.email}: ${verifyLink}`);
+      await sendVerificationEmail(user.email, verifyLink, { isWelcome, fullName: user.full_name });
+    } catch (err) {
+      console.error('[triggerVerificationEmail error]:', err.message);
+    }
+  })();
 
   return { sent: true, throttled: false, cooldownUntil };
+}
+
+const VERIFY_REMINDER_TYPE = 'email_verify_reminder';
+const VERIFY_REMINDER_MIN_ACCOUNT_AGE_MS = 24 * 60 * 60 * 1000; // don't nag someone who just signed up
+
+async function maybeSendVerifyReminder(user, io) {
+  const accountAge = Date.now() - new Date(user.created_at).getTime();
+  if (accountAge < VERIFY_REMINDER_MIN_ACCOUNT_AGE_MS) return;
+
+  const recent = await db.get(
+    "SELECT id FROM notifications WHERE user_id = ? AND type = ? AND created_at > (NOW() - INTERVAL '7 days') LIMIT 1",
+    [user.id, VERIFY_REMINDER_TYPE]
+  );
+  if (recent) return;
+
+  await sendRealtimeNotification(io, user.id, {
+    category: 'activity',
+    type: VERIFY_REMINDER_TYPE,
+    title: '📧 Verify your email',
+    description: "You haven't verified your email yet — verify it to keep your account secure and unlock PawPrint Verification.",
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -230,7 +270,7 @@ router.post('/social-complete', async (req, res) => {
     if (await UserRepo.findByEmail(email))       return res.status(409).json({ error: 'EMAIL_EXISTS',    message: 'Looks like this pet parent is already part of Sniffr. Try signing in instead.' });
     if (await UserRepo.findByUsername(username)) return res.status(409).json({ error: 'USERNAME_TAKEN',  message: '🐾 Oops! That pet tag is already taken. Try another one.' });
 
-    const password_hash = bcrypt.hashSync(Math.random().toString(36) + Date.now() + Math.random(), 12);
+    const password_hash = await bcrypt.hash(Math.random().toString(36) + Date.now() + Math.random(), 12);
     const user = await UserRepo.create({ email, username, password_hash, full_name: full_name || username });
     await db.run('UPDATE users SET email_verified = 1 WHERE id = ?', [user.id]);
     user.email_verified = 1;
@@ -289,7 +329,7 @@ router.post('/signup', async (req, res) => {
       return res.status(400).json({ error: 'VALIDATION_ERROR', errors });
     }
 
-    const password_hash = bcrypt.hashSync(password, 12);
+    const password_hash = await bcrypt.hash(password, 12);
     const user = await UserRepo.create({ email, username, password_hash, full_name: full_name.trim() });
 
     // Launch offer: first 100 signups get free Sniffr Gold. COUNT(*) here
@@ -320,7 +360,7 @@ router.get('/verify-email', async (req, res) => {
     const { token } = req.query;
     if (!token) return res.status(400).json({ error: 'MISSING_TOKEN', message: 'Verification token is required.' });
 
-    const user = await db.get('SELECT * FROM users WHERE email_verify_token = ?', [token]);
+    const user = await db.get('SELECT * FROM users WHERE email_verify_token = ?', [hashToken(token)]);
     if (!user) {
       return res.status(400).json({ error: 'INVALID_TOKEN', message: 'This verification link is invalid or has already been used.' });
     }
@@ -393,7 +433,7 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'NOT_FOUND', message: "🐾 We couldn't sniff out that account." });
     }
 
-    if (!bcrypt.compareSync(password, user.password_hash)) {
+    if (!(await bcrypt.compare(password, user.password_hash))) {
       return res.status(401).json({ error: 'BAD_PASSWORD', message: "🐾 That password doesn't match our records. Give it another sniff." });
     }
 
@@ -405,7 +445,7 @@ router.post('/login', async (req, res) => {
         const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
         await UserRepo.setPawCode(user.id, code, expiresAt);
         if (!process.env.SMTP_USER) console.log(`[DEV ONLY] PawPrint code for ${user.email}: ${code}`);
-        await sendPawCodeEmail(user.email, code);
+        sendPawCodeEmail(user.email, code).catch(err => console.error("[sendPawCodeEmail error]:", err.message));
 
         const tempToken = jwt.sign({ id: user.id, is2FATemp: true }, config.JWT_ACCESS_SECRET, { expiresIn: '10m' });
         return res.json({
@@ -438,7 +478,7 @@ router.post('/2fa/send-code', authenticateAccess, async (req, res) => {
     await UserRepo.setPawCode(user.id, code, expiresAt);
 
     if (!process.env.SMTP_USER) console.log(`[DEV ONLY] PawPrint code for ${user.email}: ${code}`);
-    await sendPawCodeEmail(user.email, code);
+    sendPawCodeEmail(user.email, code).catch(err => console.error("[sendPawCodeEmail error]:", err.message));
 
     return res.json({ success: true, message: 'Paw Code sent to your registered email.' });
   } catch (err) {
@@ -575,12 +615,108 @@ router.post('/2fa/resend-code', async (req, res) => {
     await UserRepo.setPawCode(user.id, code, expiresAt);
 
     if (!process.env.SMTP_USER) console.log(`[DEV ONLY] PawPrint code (resent) for ${user.email}: ${code}`);
-    await sendPawCodeEmail(user.email, code);
+    sendPawCodeEmail(user.email, code).catch(err => console.error("[sendPawCodeEmail error]:", err.message));
 
     return res.json({ success: true, message: 'A new Paw Code has been sent to your registered email.' });
   } catch (err) {
     console.error('[/2fa/resend-code error]:', err);
     res.status(500).json({ error: 'SERVER_ERROR', message: 'Failed to resend Paw Code.' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// PAWPRINT VERIFICATION — ENABLE-BY-EMAIL-LINK
+// Turning PawPrint ON is confirmed via a clicked "Verify & Enable PawPrint"
+// email link (a deliberate, single-use, time-limited token -- same shape as
+// account email verification), NOT the 6-digit code above. That code flow
+// is untouched and still used for login-time 2FA (/2fa/verify-login,
+// /2fa/resend-code) and remains the mechanism once PawPrint is already on.
+// ═══════════════════════════════════════════════════════════════
+const pawprintLinkCooldowns = new Map(); // userId -> last-sent timestamp
+const PAWPRINT_LINK_COOLDOWN_MS = 60 * 1000;
+const PAWPRINT_LINK_EXPIRY_MS = 60 * 60 * 1000; // 1 hour -- shorter-lived than account verification since it grants a security feature
+
+async function triggerPawprintVerifyLink(user) {
+  const now = Date.now();
+  const lastSent = pawprintLinkCooldowns.get(user.id);
+  if (lastSent && now - lastSent < PAWPRINT_LINK_COOLDOWN_MS) {
+    return { sent: false, throttled: true, cooldownUntil: lastSent + PAWPRINT_LINK_COOLDOWN_MS };
+  }
+  const cooldownUntil = now + PAWPRINT_LINK_COOLDOWN_MS;
+  pawprintLinkCooldowns.set(user.id, now); // set synchronously before any await -- closes the same race window as triggerVerificationEmail
+
+  // Fire-and-forget -- see triggerVerificationEmail for why this must never
+  // be awaited by the caller.
+  (async () => {
+    try {
+      const token = crypto.randomBytes(32).toString('hex');
+      const expiresAt = new Date(now + PAWPRINT_LINK_EXPIRY_MS).toISOString();
+      await UserRepo.setPawprintVerifyToken(user.id, hashToken(token), expiresAt);
+      const verifyLink = `${config.CLIENT_URL || 'http://localhost:5173'}/verify-pawprint?token=${token}`;
+      if (!process.env.SMTP_USER) console.log(`[DEV ONLY] PawPrint verify-link for ${user.email}: ${verifyLink}`);
+      await sendPawprintVerifyLinkEmail(user.email, verifyLink);
+    } catch (err) {
+      console.error('[triggerPawprintVerifyLink error]:', err.message);
+    }
+  })();
+
+  return { sent: true, throttled: false, cooldownUntil };
+}
+
+// POST /api/auth/pawprint/send-verify-link (authenticated)
+router.post('/pawprint/send-verify-link', authenticateAccess, async (req, res) => {
+  try {
+    const user = await UserRepo.findById(req.user.id);
+    if (!user) return res.status(404).json({ error: 'USER_NOT_FOUND' });
+    if (user.pawprint_2fa_enabled) {
+      return res.json({ success: true, alreadyEnabled: true, message: 'PawPrint Verification is already enabled! 🐾' });
+    }
+    if (!user.email_verified) {
+      return res.status(400).json({ error: 'EMAIL_NOT_VERIFIED', message: 'Please verify your account email first, then enable PawPrint.' });
+    }
+
+    const result = await triggerPawprintVerifyLink(user);
+    if (result.throttled) {
+      const waitSeconds = Math.ceil((result.cooldownUntil - Date.now()) / 1000);
+      return res.status(429).json({
+        error: 'COOLDOWN',
+        message: `Please wait ${waitSeconds}s before requesting another verification email.`,
+        cooldownUntil: result.cooldownUntil,
+        waitSeconds,
+      });
+    }
+
+    return res.json({ success: true, message: '🐾 Check your inbox — click the link to enable PawPrint Verification.', cooldownUntil: result.cooldownUntil });
+  } catch (err) {
+    console.error('[/pawprint/send-verify-link error]:', err);
+    res.status(500).json({ error: 'SERVER_ERROR', message: 'Failed to send PawPrint verification email.' });
+  }
+});
+
+// GET /api/auth/pawprint/verify-link?token=... (public -- proof of identity is possession of the emailed link)
+router.get('/pawprint/verify-link', async (req, res) => {
+  try {
+    const { token } = req.query;
+    if (!token) return res.status(400).json({ error: 'MISSING_TOKEN', message: 'Verification token is required.' });
+
+    const user = await UserRepo.findByPawprintVerifyTokenHash(hashToken(token));
+    if (!user) {
+      return res.status(400).json({ error: 'INVALID_TOKEN', message: 'This link is invalid or has already been used.' });
+    }
+    if (!user.pawprint_verify_expires_at || new Date(user.pawprint_verify_expires_at) < new Date()) {
+      return res.status(400).json({ error: 'EXPIRED_TOKEN', message: 'This link has expired. Please request a new one from Settings.' });
+    }
+
+    await UserRepo.set2FAStatus(user.id, 1);
+    await UserRepo.clearPawprintVerifyToken(user.id);
+
+    const io = req.app.get('io');
+    if (io) io.to(`user_${user.id}`).emit('pawprint_enabled', { userId: user.id });
+
+    return res.json({ success: true, message: '🐾 PawPrint Verification enabled successfully!' });
+  } catch (err) {
+    console.error('[/pawprint/verify-link error]:', err);
+    res.status(500).json({ error: 'SERVER_ERROR', message: 'PawPrint verification encountered a problem.' });
   }
 });
 
@@ -611,7 +747,7 @@ router.post('/forgot-password', async (req, res) => {
 
     const token = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString(); // 1 hour expiry
-    await UserRepo.updateResetToken(user.id, token, expiresAt);
+    await UserRepo.updateResetToken(user.id, hashToken(token), expiresAt);
 
     const resetLink = `${config.CLIENT_URL || 'http://localhost:5173'}/reset-password?token=${token}`;
     if (!process.env.SMTP_USER) console.log(`[DEV ONLY] Password reset link for ${user.email}: ${resetLink}`);
@@ -634,7 +770,7 @@ router.post('/reset-password', async (req, res) => {
       return res.status(400).json({ error: 'NO_TOKEN', message: "🐾 That password reset link is invalid or has expired. Give it another sniff." });
     }
 
-    const user = await UserRepo.findByResetToken(token);
+    const user = await UserRepo.findByResetToken(hashToken(token));
     if (!user || new Date(user.reset_token_expires_at) < new Date()) {
       return res.status(400).json({ error: 'INVALID_TOKEN', message: "🐾 That password reset link is invalid or has expired. Give it another sniff." });
     }
@@ -658,7 +794,7 @@ router.post('/reset-password', async (req, res) => {
       return res.status(400).json({ error: 'VALIDATION_ERROR', errors });
     }
 
-    const password_hash = bcrypt.hashSync(password, 12);
+    const password_hash = await bcrypt.hash(password, 12);
     await UserRepo.updatePassword(user.id, password_hash);
     await UserRepo.clearResetToken(user.id);
 
@@ -679,7 +815,7 @@ router.post('/change-password', authenticateAccess, async (req, res) => {
       return res.status(400).json({ error: 'VALIDATION_ERROR', errors: [{ field: 'currentPassword', message: 'Current password is required' }] });
     }
 
-    const isMatch = bcrypt.compareSync(currentPassword, user.password_hash);
+    const isMatch = await bcrypt.compare(currentPassword, user.password_hash);
     if (!isMatch) {
       return res.status(400).json({ error: 'VALIDATION_ERROR', errors: [{ field: 'currentPassword', message: 'Incorrect current password' }] });
     }
@@ -700,7 +836,7 @@ router.post('/change-password', authenticateAccess, async (req, res) => {
       return res.status(400).json({ error: 'VALIDATION_ERROR', errors });
     }
 
-    const password_hash = bcrypt.hashSync(newPassword, 12);
+    const password_hash = await bcrypt.hash(newPassword, 12);
     await UserRepo.updatePassword(user.id, password_hash);
 
     return res.json({ success: true, message: 'Password updated successfully!' });
@@ -750,6 +886,16 @@ router.get('/me', authenticateAccess, async (req, res) => {
     if (!user) return res.status(404).json({ error: 'USER_NOT_FOUND' });
     const pet = await PetRepo.getActivePet(user.id);
     const allPets = await PetRepo.findAllByUserId(user.id);
+
+    // Best-effort, non-blocking verification reminder -- fires on session
+    // checks (app loads) rather than a cron job, since there's no scheduler
+    // in this codebase. Gated so it can only ever fire once per 7 days per
+    // user: reuses the notifications table itself as the cooldown record
+    // instead of adding a new column.
+    if (!user.email_verified && io) {
+      maybeSendVerifyReminder(user, io).catch(() => {});
+    }
+
     res.json({
       user: {
         id: user.id,

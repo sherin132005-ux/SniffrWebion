@@ -102,6 +102,18 @@ class UserRepository extends BaseRepository {
   async clearTrustedDevices(userId) {
     return db.run('DELETE FROM trusted_devices WHERE user_id = ?', [userId]);
   }
+
+  async setPawprintVerifyToken(userId, tokenHash, expiresAt) {
+    return db.run('UPDATE users SET pawprint_verify_token_hash = ?, pawprint_verify_expires_at = ? WHERE id = ?', [tokenHash, expiresAt, userId]);
+  }
+
+  async findByPawprintVerifyTokenHash(tokenHash) {
+    return db.get('SELECT * FROM users WHERE pawprint_verify_token_hash = ?', [tokenHash]);
+  }
+
+  async clearPawprintVerifyToken(userId) {
+    return db.run('UPDATE users SET pawprint_verify_token_hash = NULL, pawprint_verify_expires_at = NULL WHERE id = ?', [userId]);
+  }
 }
 
 export default new UserRepository();

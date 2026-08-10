@@ -14,6 +14,12 @@ function getTransporter() {
       user: process.env.SMTP_USER,
       pass: process.env.SMTP_PASS,
     },
+    // Bounded so a bad host/blocked port fails fast (a few seconds) instead
+    // of hanging for the platform's default multi-minute socket timeout --
+    // callers already treat send failures as non-fatal/background.
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 15000,
     tls: {
       // Some Windows setups (antivirus/network inspection) inject a self-signed
       // certificate into the TLS chain, which Node rejects by default.
@@ -76,6 +82,23 @@ export async function sendPasswordResetEmail(toEmail, resetLink) {
         <p>Click the button below to reset your Sniffr password:</p>
         <a href="${resetLink}" style="display: inline-block; padding: 12px 24px; background: #8E2E43; color: white; text-decoration: none; border-radius: 24px; font-weight: bold;">Reset Password</a>
         <p style="color: #666; font-size: 14px; margin-top: 16px;">This link expires in 1 hour. If you didn't request this, you can safely ignore this email.</p>
+      </div>
+    `,
+  });
+}
+
+export async function sendPawprintVerifyLinkEmail(toEmail, verifyLink) {
+  return sendEmail({
+    to: toEmail,
+    subject: '🐾 Verify & Enable PawPrint Verification',
+    text: `Confirm you want to enable PawPrint Verification (2FA) on your Sniffr account: ${verifyLink}\n\nThis link expires in 1 hour. If you didn't request this, you can safely ignore this email.`,
+    html: `
+      <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
+        <h2 style="color: #8E2E43;">🐾 Sniffr PawPrint Verification</h2>
+        <p>You asked to enable <strong>PawPrint Verification</strong> — an extra layer of protection that requires a one-time code when signing in from a new device.</p>
+        <p>Click the button below to confirm and turn it on:</p>
+        <a href="${verifyLink}" style="display: inline-block; padding: 12px 24px; background: #8E2E43; color: white; text-decoration: none; border-radius: 24px; font-weight: bold; margin: 12px 0;">Verify & Enable PawPrint</a>
+        <p style="color: #666; font-size: 14px; margin-top: 16px;">This link expires in 1 hour and can only be used once. If you didn't request this, you can safely ignore this email — PawPrint will stay off.</p>
       </div>
     `,
   });

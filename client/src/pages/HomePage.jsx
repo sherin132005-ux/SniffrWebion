@@ -1042,7 +1042,7 @@ export default function HomePage() {
       )}
 
       {/* Header */}
-      <header className="lg:hidden bg-white/80 dark:bg-zinc-950/80 backdrop-blur-md shadow-[0_15px_40px_-15px_rgba(244,167,185,0.2)] fixed top-0 w-full z-50">
+      <header className="lg:hidden bg-white/80 dark:bg-zinc-950/80 backdrop-blur-md shadow-[0_15px_40px_-15px_rgba(244,167,185,0.2)] fixed top-0 left-0 right-0 md:left-20 z-50">
         <div className="flex justify-between items-center w-full px-6 py-4">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center">
@@ -1067,7 +1067,7 @@ export default function HomePage() {
         </div>
       </header>
 
-      <main className="pt-24 lg:pt-8 px-4 lg:px-8 max-w-2xl lg:max-w-none mx-auto lg:mx-0 space-y-8">
+      <main className="pt-24 lg:pt-8 px-4 lg:px-8 max-w-2xl lg:max-w-none mx-auto lg:mx-0 space-y-5 sm:space-y-6 lg:space-y-8">
         {/* Desktop title */}
         <div className="hidden lg:flex items-center justify-between mb-2">
           <div>
@@ -1121,7 +1121,7 @@ export default function HomePage() {
         </div>
 
         {/* Feed */}
-        <div className="space-y-8 lg:masonry-grid">
+        <div className="space-y-5 sm:space-y-6 lg:space-y-8 lg:masonry-grid">
           {loading ? (
             <div className="space-y-6">
               {[1, 2, 3].map(i => (
@@ -1216,21 +1216,21 @@ export default function HomePage() {
                       </div>
                     )}
                     {/* Header */}
-                    <div className="flex items-center justify-between p-5 select-none">
-                      <div className="flex items-center gap-3">
-                        <div className="relative">
+                    <div className="flex items-center justify-between gap-2 p-4 sm:p-5 select-none">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="relative flex-shrink-0">
                           <img src={post.pet_avatar || '/logo.png'} alt={post.pet_name} className="w-12 h-12 rounded-full object-cover border-2 border-primary/20" draggable={false} />
                           <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-emerald-400 rounded-full border-2 border-white" />
                         </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <h4 className="font-bold text-on-surface">{post.pet_name}</h4>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h4 className="font-bold text-on-surface truncate max-w-[9rem] sm:max-w-none">{post.pet_name}</h4>
                             <PremiumBadge pet={post} size="text-base" />
                             {post.breed_name && (
                               <span className="bg-tertiary/10 text-on-tertiary-container px-2 py-0.5 rounded-full text-[8px] font-bold uppercase tracking-widest">{post.breed_name}</span>
                             )}
                           </div>
-                          <p className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">
+                          <p className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant truncate">
                             {post.distance ? `${post.distance.toFixed(1)} km away` : post.location_text || 'Nearby'}
                           </p>
                         </div>
@@ -1335,11 +1335,11 @@ export default function HomePage() {
 
                     {/* Media */}
                     {post.media_url && (
-                      <div className="relative overflow-hidden bg-black/5 flex items-center justify-center select-none" style={{ maxHeight: '480px' }}>
+                      <div className="relative overflow-hidden bg-black/5 flex items-center justify-center select-none" style={{ maxHeight: 'min(480px, 70vh)' }}>
                         {post.media_type === 'video' ? (
-                          <video src={post.media_url} controls className="w-full object-contain" style={{ maxHeight: '480px' }} />
+                          <video src={post.media_url} controls className="w-full max-h-full object-contain" style={{ maxHeight: 'min(480px, 70vh)' }} />
                         ) : (
-                          <img src={post.media_url} alt={post.caption} className="w-full object-cover group-hover:scale-105 transition-transform duration-700" style={{ maxHeight: '480px' }} draggable={false} />
+                          <img src={post.media_url} alt={post.caption} className="w-full max-h-full object-contain group-hover:scale-105 transition-transform duration-700" style={{ maxHeight: 'min(480px, 70vh)' }} draggable={false} />
                         )}
 
                         {/* Double-tap paw animation overlay with sparkles */}
@@ -1376,7 +1376,7 @@ export default function HomePage() {
                     )}
 
                     {/* Caption & Actions */}
-                    <div className="p-5 space-y-3 select-none">
+                    <div className="p-4 sm:p-5 space-y-3 select-none">
                       {formatLikeCount(post.like_count) && (
                         <p className="font-bold text-xs text-on-surface">{formatLikeCount(post.like_count)}</p>
                       )}
@@ -1386,7 +1386,7 @@ export default function HomePage() {
                       )}
 
                       {/* Action buttons — visually balanced by weight */}
-                      <div className="flex items-center gap-7 pt-3 border-t border-outline-variant/10">
+                      <div className="flex items-center gap-5 sm:gap-7 pt-3 border-t border-outline-variant/10">
                         {/* Like */}
                         <button
                           onClick={(e) => { e.stopPropagation(); toggleLike(post.id); }}

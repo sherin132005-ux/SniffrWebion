@@ -448,9 +448,28 @@ router.post('/:id/view', async (req, res) => {
       return res.json({ success: true, notified: false });
     }
 
+    // Optional: a "sniff" originating from inside a PawCircle's member list
+    // gets community-flavored copy instead of the generic "viewed your
+    // profile" text -- same view record either way, just different wording.
+    const communityId = parseInt(req.body?.communityId, 10);
+    let communityName = null;
+    if (!isNaN(communityId)) {
+      const community = await db.get('SELECT name FROM communities WHERE id = ?', [communityId]);
+      communityName = community?.name || null;
+    }
+
     const io = req.app.get('io');
     if (io) {
-      await sendRealtimeNotification(io, viewedPet.user_id, {
+      await sendRealtimeNotification(io, viewedPet.user_id, communityName ? {
+        category: 'pawcircle',
+        type: 'profile_sniff',
+        title: `👃 ${viewerPet.name} from ${communityName} sniffed your profile!`,
+        description: `${viewerPet.name} from ${communityName} sniffed your profile.`,
+        avatarUrl: viewerPet.avatar_url || null,
+        targetId: String(viewerPet.id),
+        senderPetId: viewerPet.id,
+        metadata: { community_id: communityId },
+      } : {
         category: 'activity',
         type: 'profile_view',
         title: `👀 ${viewerPet.name} viewed your profile!`,

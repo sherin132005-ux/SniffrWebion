@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
+import { useSocket } from './context/SocketContext';
 import { CallProvider } from './context/CallContext';
 import BottomNav, { SidebarNav } from './components/BottomNav';
 import EmailVerifyBanner from './components/EmailVerifyBanner';
@@ -20,6 +21,7 @@ const PrivacyPage       = lazy(() => import('./pages/PrivacyPage'));
 const TermsPage         = lazy(() => import('./pages/TermsPage'));
 const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage'));
 const VerifyEmailPage   = lazy(() => import('./pages/VerifyEmailPage'));
+const VerifyPawprintPage = lazy(() => import('./pages/VerifyPawprintPage'));
 const CommunityPage     = lazy(() => import('./pages/CommunityPage'));
 const CreateCommunityPage = lazy(() => import('./pages/CreateCommunityPage'));
 
@@ -72,7 +74,18 @@ function BackgroundBlobs() {
 
 function MainLayout({ children }) {
   const location = useLocation();
-  const { user } = useAuth();
+  const { user, refreshProfile } = useAuth();
+  const { socket } = useSocket();
+
+  // Live update: if PawPrint gets enabled via the emailed link (e.g. opened
+  // in another tab/device while this session stays open), reflect it here
+  // immediately instead of waiting for the next manual refresh.
+  useEffect(() => {
+    if (!socket) return;
+    const onPawprintEnabled = () => refreshProfile();
+    socket.on('pawprint_enabled', onPawprintEnabled);
+    return () => socket.off('pawprint_enabled', onPawprintEnabled);
+  }, [socket, refreshProfile]);
 
   const showNav =
     ['/home', '/meet', '/chat', '/profile', '/spotlight'].includes(location.pathname) ||
@@ -110,7 +123,11 @@ export default function App() {
   const [initialLoading, setInitialLoading] = useState(true);
 
   useEffect(() => {
-    const t = setTimeout(() => setInitialLoading(false), 2500);
+    // Brief branding flash only -- this used to force a flat 2.5s wait on
+    // every single page load/refresh regardless of how fast the session
+    // actually resolved, which is most of what made the app feel slow to
+    // "get in" even when the network calls themselves were quick.
+    const t = setTimeout(() => setInitialLoading(false), 500);
     return () => clearTimeout(t);
   }, []);
 
@@ -134,6 +151,7 @@ export default function App() {
           <Route path="/terms" element={<TermsPage />} />
           <Route path="/reset-password" element={<ResetPasswordPage />} />
           <Route path="/verify-email" element={<VerifyEmailPage />} />
+          <Route path="/verify-pawprint" element={<VerifyPawprintPage />} />
 
           {/* Protected Onboarding */}
           <Route

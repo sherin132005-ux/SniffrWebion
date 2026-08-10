@@ -838,6 +838,31 @@
   animation: bottom-sheet-slide-up 0.35s cubic-bezier(0.25, 1, 0.5, 1) forwards;
 }
 
+/* ==========================================
+   MEET CARD — FIRST-TIME SWIPE HINT
+   ========================================== */
+@keyframes swipe-hint-hand {
+  0%, 100% { transform: translateX(0); opacity: 0.7; }
+  25%       { transform: translateX(-14px); opacity: 1; }
+  50%       { transform: translateX(0); opacity: 0.7; }
+  75%       { transform: translateX(14px); opacity: 1; }
+}
+.animate-swipe-hint-hand {
+  display: inline-block;
+  animation: swipe-hint-hand 1.8s ease-in-out infinite;
+}
+
+@keyframes swipe-hint-arrow-left {
+  0%, 100% { transform: translateX(0); opacity: 0.6; }
+  50%       { transform: translateX(-6px); opacity: 1; }
+}
+@keyframes swipe-hint-arrow-right {
+  0%, 100% { transform: translateX(0); opacity: 0.6; }
+  50%       { transform: translateX(6px); opacity: 1; }
+}
+.animate-swipe-hint-arrow-left  { animation: swipe-hint-arrow-left 1.4s ease-in-out infinite; }
+.animate-swipe-hint-arrow-right { animation: swipe-hint-arrow-right 1.4s ease-in-out infinite; }
+
 /* Multi-media pre-send upload preview list card styling */
 .media-pre-send-card {
   position: relative;

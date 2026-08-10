@@ -151,7 +151,7 @@ class CommunityRepository extends BaseRepository {
     const members = await db.all(
       `SELECT cm.*, u.username, u.full_name, u.email,
               u.subscription_status, u.premium_badge_enabled, u.plan_expiry_date,
-              p.name as pet_name, p.avatar_url as pet_avatar
+              p.id as pet_id, p.name as pet_name, p.avatar_url as pet_avatar, p.breed_name, p.bio
        FROM community_members cm
        JOIN users u ON cm.user_id = u.id
        LEFT JOIN pets p ON u.id = p.user_id
@@ -174,7 +174,7 @@ class CommunityRepository extends BaseRepository {
     const members = await db.all(
       `SELECT cm.*, u.username, u.full_name, u.email,
               u.subscription_status, u.premium_badge_enabled, u.plan_expiry_date,
-              p.name as pet_name, p.avatar_url as pet_avatar
+              p.id as pet_id, p.name as pet_name, p.avatar_url as pet_avatar, p.breed_name, p.bio
        FROM community_members cm
        JOIN users u ON cm.user_id = u.id
        LEFT JOIN pets p ON u.id = p.user_id
@@ -351,12 +351,22 @@ class CommunityRepository extends BaseRepository {
   }
 
   async leave(communityId, userId) {
+    const community = await db.get('SELECT created_by FROM communities WHERE id = ?', [communityId]);
     await db.run('DELETE FROM community_members WHERE community_id = ? AND user_id = ?', [communityId, userId]);
-    await db.run(
-      'UPDATE communities SET member_count = (SELECT COUNT(*) FROM community_members WHERE community_id = ?) WHERE id = ?',
-      [communityId, communityId]
-    );
-    return { success: true };
+
+    const remaining = await db.get('SELECT COUNT(*)::int as count FROM community_members WHERE community_id = ?', [communityId]);
+    const count = remaining ? Number(remaining.count) : 0;
+
+    // If the owner just left and nobody else remains, the circle can never
+    // be used again -- delete it outright (child rows cascade via FK) rather
+    // than leaving an orphaned, unwanted PawCircle behind.
+    if (community && community.created_by === userId && count === 0) {
+      await db.run('DELETE FROM communities WHERE id = ?', [communityId]);
+      return { success: true, deleted: true };
+    }
+
+    await db.run('UPDATE communities SET member_count = ? WHERE id = ?', [count, communityId]);
+    return { success: true, deleted: false };
   }
 
   async addMessage({ community_id, sender_id, content, media_url = null, message_type = 'text', reply_to_id = null }) {

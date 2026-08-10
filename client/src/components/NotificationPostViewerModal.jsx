@@ -437,11 +437,11 @@ export default function NotificationPostViewerModal({ postId, autoOpenComments =
 
               {/* Media */}
               {post.media_url && (
-                <div className="relative bg-zinc-50 dark:bg-zinc-800 flex items-center justify-center select-none" style={{ maxHeight: '480px' }}>
+                <div className="relative bg-zinc-50 dark:bg-zinc-800 flex items-center justify-center select-none" style={{ maxHeight: 'min(480px, 70vh)' }}>
                   {post.media_type === 'video' ? (
-                    <video src={post.media_url} controls className="w-full object-contain" style={{ maxHeight: '480px' }} />
+                    <video src={post.media_url} controls className="w-full max-h-full object-contain" style={{ maxHeight: 'min(480px, 70vh)' }} />
                   ) : (
-                    <img src={post.media_url} alt={post.caption || 'Memory'} className="w-full object-cover" style={{ maxHeight: '480px' }} draggable={false} />
+                    <img src={post.media_url} alt={post.caption || 'Memory'} className="w-full max-h-full object-contain" style={{ maxHeight: 'min(480px, 70vh)' }} draggable={false} />
                   )}
 
                   {/* Double-tap Paw Animation Overlay */}

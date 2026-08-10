@@ -83,6 +83,15 @@ export default function MeetPage() {
   const cardRef = useRef(null);
   const dragStartRef = useRef({ x: 0, y: 0, startX: 0 });
 
+  // ── First-time swipe hint (teaches the gesture, dismissed for good after the user's first drag) ──
+  const [showSwipeHint, setShowSwipeHint] = useState(() => {
+    try { return !localStorage.getItem('sniffr_meet_swipe_hint_seen'); } catch { return true; }
+  });
+  const dismissSwipeHint = () => {
+    setShowSwipeHint(false);
+    try { localStorage.setItem('sniffr_meet_swipe_hint_seen', '1'); } catch {}
+  };
+
   // ── Ad Manager hook point: frequency comes from premium.adFrequency ──
   const [swipeCount, setSwipeCount] = useState(0);
   const [showAd, setShowAd] = useState(false);
@@ -435,6 +444,7 @@ export default function MeetPage() {
 
   const handleDragStart = (clientX, clientY) => {
     if (isProcessing || !currentPet) return;
+    if (showSwipeHint) dismissSwipeHint();
     setIsDragging(true);
     dragStartRef.current = { x: clientX, y: clientY, startX: swipeX };
   };
@@ -567,6 +577,7 @@ export default function MeetPage() {
 
   const handleSwipeRight = async () => {
     if (isProcessing || !currentPet) return;
+    if (showSwipeHint) dismissSwipeHint();
     setIsProcessing(true);
     setSwipeDirection('right');
     setShowPawAnimation(true);
@@ -599,6 +610,7 @@ export default function MeetPage() {
 
   const handleSwipeLeft = async () => {
     if (isProcessing || !currentPet) return;
+    if (showSwipeHint) dismissSwipeHint();
     setIsProcessing(true);
     setSwipeDirection('left');
     maybeShowAd();
@@ -786,7 +798,7 @@ export default function MeetPage() {
       )}
 
       {/* Mobile header */}
-      <header className="lg:hidden bg-white/80 dark:bg-zinc-950/80 backdrop-blur-md shadow-[0_15px_40px_-15px_rgba(244,167,185,0.2)] fixed top-0 w-full z-50">
+      <header className="lg:hidden bg-white/80 dark:bg-zinc-950/80 backdrop-blur-md shadow-[0_15px_40px_-15px_rgba(244,167,185,0.2)] fixed top-0 left-0 right-0 md:left-20 z-50">
         <div className="flex justify-between items-center px-6 py-4">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center">
@@ -1046,6 +1058,33 @@ export default function MeetPage() {
                         </div>
                       )}
                     </>
+                  )}
+
+                  {/* First-time Swipe Hint — teaches new users the gesture; dismissed
+                      for good (localStorage) the moment they drag the card or tap a button */}
+                  {showSwipeHint && !isDragging && (
+                    <div
+                      onClick={dismissSwipeHint}
+                      className="absolute inset-0 z-40 rounded-[1.75rem] bg-black/40 backdrop-blur-[2px] flex flex-col items-center justify-center gap-4 animate-fade-in cursor-pointer select-none"
+                    >
+                      <div className="w-full flex items-center justify-between px-8">
+                        <div className="flex flex-col items-center gap-1">
+                          <span className="material-symbols-outlined text-rose-300 text-4xl animate-swipe-hint-arrow-left">chevron_left</span>
+                          <span className="text-[10px] font-black uppercase tracking-widest text-white/90">Skip</span>
+                        </div>
+                        <div className="flex flex-col items-center gap-1">
+                          <span className="material-symbols-outlined text-emerald-300 text-4xl animate-swipe-hint-arrow-right">chevron_right</span>
+                          <span className="text-[10px] font-black uppercase tracking-widest text-white/90">Meet</span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 bg-white/15 border border-white/25 px-4 py-2 rounded-full animate-pulse-glow">
+                        <span className="material-symbols-outlined text-white text-xl animate-swipe-hint-hand" style={{ fontVariationSettings: "'FILL' 1" }}>swipe</span>
+                        <span className="text-xs font-extrabold text-white tracking-wide">Swipe right to Meet, left to Skip</span>
+                      </div>
+
+                      <span className="text-[10px] font-bold text-white/70 uppercase tracking-wider">Tap anywhere to try it</span>
+                    </div>
                   )}
 
                   {/* The Card */}
