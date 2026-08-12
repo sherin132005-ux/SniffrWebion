@@ -52,13 +52,16 @@ function formatRelativeTimestamp(dateString) {
   return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-export default function GalleryViewerModal({ posts = [], initialIndex = 0, petName = 'Pet', isOwner = false, onClose, onPostLiked, onPostDeleted }) {
+export default function GalleryViewerModal({ posts = [], initialIndex = 0, petName = 'Pet', isOwner = false, onClose, onPostLiked, onPostDeleted, onPostUpdated }) {
   const { pet: activePet } = useAuth();
   const [commentPostId, setCommentPostId] = useState(null);
   const [sharePost, setSharePost] = useState(null);
   const [reportPost, setReportPost] = useState(null);
   const [optionsPost, setOptionsPost] = useState(null);
   const [deleteConfirmPost, setDeleteConfirmPost] = useState(null);
+  const [editPost, setEditPost] = useState(null);
+  const [editCaption, setEditCaption] = useState('');
+  const [editSaving, setEditSaving] = useState(false);
   const [localPosts, setLocalPosts] = useState(posts);
   const postRefs = useRef([]);
 
@@ -75,6 +78,11 @@ export default function GalleryViewerModal({ posts = [], initialIndex = 0, petNa
     }
   }, [initialIndex]);
 
+  // Guards against a rapid re-tap's earlier /like response landing after a
+  // later one and stomping the state it already set (see HomePage.jsx's
+  // toggleLike for the full explanation of this race).
+  const likeSeqRef = useRef({});
+
   const toggleLike = async (postId) => {
     setLocalPosts(prev => prev.map(p => {
       if (p.id === postId) {
@@ -86,8 +94,12 @@ export default function GalleryViewerModal({ posts = [], initialIndex = 0, petNa
       return p;
     }));
 
+    const seq = (likeSeqRef.current[postId] || 0) + 1;
+    likeSeqRef.current[postId] = seq;
+
     try {
       const d = await api.post(`/posts/${postId}/like`);
+      if (likeSeqRef.current[postId] !== seq) return; // superseded by a newer tap
       setLocalPosts(prev => prev.map(p => {
         if (p.id === postId) {
           if (onPostLiked) onPostLiked(postId, d.liked, d.likeCount);
@@ -111,6 +123,23 @@ export default function GalleryViewerModal({ posts = [], initialIndex = 0, petNa
       setLocalPosts(prev => prev.filter(p => p.id !== postId));
       if (onPostDeleted) onPostDeleted(postId);
     } catch (e) { console.error(e); }
+  };
+
+  // Editing lives here (the owner's own gallery / "Me" page) only -- this is
+  // the sole place a post's caption can be edited from.
+  const handleSaveEdit = async () => {
+    if (!editPost) return;
+    setEditSaving(true);
+    try {
+      const res = await api.put(`/posts/${editPost.id}`, { caption: editCaption });
+      setLocalPosts(prev => prev.map(p => p.id === editPost.id ? { ...p, caption: res.post.caption } : p));
+      if (onPostUpdated) onPostUpdated(editPost.id, res.post.caption);
+      setEditPost(null);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setEditSaving(false);
+    }
   };
 
   return createPortal(
@@ -190,14 +219,28 @@ export default function GalleryViewerModal({ posts = [], initialIndex = 0, petNa
                           <span>Copy Link</span>
                         </button>
                         {isPostOwner ? (
-                          <button
-                            type="button"
-                            onClick={() => { setDeleteConfirmPost(post); setOptionsPost(null); }}
-                            className="w-full text-left px-4 py-2.5 hover:bg-zinc-50 dark:hover:bg-zinc-800 text-xs font-bold text-rose-600 flex items-center gap-2 border-t border-zinc-100/50 cursor-pointer"
-                          >
-                            <span className="material-symbols-outlined text-sm text-rose-600">delete</span>
-                            <span>Delete</span>
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditPost(post);
+                                setEditCaption(post.caption || '');
+                                setOptionsPost(null);
+                              }}
+                              className="w-full text-left px-4 py-2.5 hover:bg-zinc-50 dark:hover:bg-zinc-800 text-xs font-bold text-on-surface flex items-center gap-2 border-t border-zinc-100/50 cursor-pointer"
+                            >
+                              <span className="material-symbols-outlined text-sm text-zinc-400">edit</span>
+                              <span>Edit</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => { setDeleteConfirmPost(post); setOptionsPost(null); }}
+                              className="w-full text-left px-4 py-2.5 hover:bg-zinc-50 dark:hover:bg-zinc-800 text-xs font-bold text-rose-600 flex items-center gap-2 border-t border-zinc-100/50 cursor-pointer"
+                            >
+                              <span className="material-symbols-outlined text-sm text-rose-600">delete</span>
+                              <span>Delete</span>
+                            </button>
+                          </>
                         ) : (
                           <button
                             type="button"
@@ -298,6 +341,50 @@ export default function GalleryViewerModal({ posts = [], initialIndex = 0, petNa
           post={reportPost}
           onClose={() => setReportPost(null)}
         />
+      )}
+
+      {editPost && (
+        <div className="fixed inset-0 z-[99999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in" onClick={(e) => e.target === e.currentTarget && !editSaving && setEditPost(null)}>
+          <div className="bg-white dark:bg-zinc-900 rounded-[2.5rem] p-6 sm:p-8 max-w-sm w-full shadow-2xl border border-outline-variant/20 space-y-4 animate-scale-up">
+            <div className="flex items-center justify-between">
+              <h3 className="font-extrabold text-base text-on-surface flex items-center gap-2">
+                <span className="material-symbols-outlined text-primary">edit</span> Edit Post
+              </h3>
+              <button
+                onClick={() => !editSaving && setEditPost(null)}
+                disabled={editSaving}
+                className="w-8 h-8 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 flex items-center justify-center disabled:opacity-50"
+              >
+                <span className="material-symbols-outlined text-base">close</span>
+              </button>
+            </div>
+            <textarea
+              rows={4}
+              value={editCaption}
+              onChange={e => setEditCaption(e.target.value)}
+              placeholder="Update your caption..."
+              className="w-full px-4 py-3 rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-sm font-medium focus:ring-2 focus:ring-primary outline-none resize-none"
+            />
+            <div className="flex gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setEditPost(null)}
+                disabled={editSaving}
+                className="flex-1 py-3 bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 font-extrabold text-xs rounded-xl uppercase tracking-wider disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveEdit}
+                disabled={editSaving}
+                className="flex-1 py-3 bg-primary hover:bg-primary/90 text-white font-extrabold text-xs rounded-xl shadow-md active:scale-95 uppercase tracking-wider disabled:opacity-50"
+              >
+                {editSaving ? 'Saving...' : 'Save Changes'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {deleteConfirmPost && (

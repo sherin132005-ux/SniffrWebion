@@ -508,20 +508,14 @@ else if (
                         {/* Avatar / Category Badge */}
                         <div className="relative flex-shrink-0">
                           <div className="w-10 h-10 rounded-full overflow-hidden bg-zinc-100 border border-zinc-200/50">
-                            {notif.avatar_url && !brokenAvatarIds.has(notif.id) ? (
-                              <img
-                                src={notif.avatar_url}
-                                alt={notif.title}
-                                className="w-full h-full object-cover"
-                                onError={() => {
-                                  setBrokenAvatarIds(prev => new Set(prev).add(notif.id));
-                                }}
-                              />
-                            ) : (
-                              <div className="w-full h-full bg-primary/10 text-primary flex items-center justify-center font-bold text-sm">
-                                🐾
-                              </div>
-                            )}
+                            <img
+                              src={notif.avatar_url && !brokenAvatarIds.has(notif.id) ? notif.avatar_url : '/logo.png'}
+                              alt={notif.title}
+                              className="w-full h-full object-cover"
+                              onError={() => {
+                                setBrokenAvatarIds(prev => new Set(prev).add(notif.id));
+                              }}
+                            />
                           </div>
                           <span className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-white dark:bg-zinc-900 shadow-xs flex items-center justify-center text-[10px]">
                             {notif.category === 'matches' ? '❤️' : notif.category === 'activity' ? '🐾' : notif.category === 'pawcircle' ? '👥' : notif.category === 'nearby' ? '📍' : notif.category === 'offers' ? '🎁' : '📧'}

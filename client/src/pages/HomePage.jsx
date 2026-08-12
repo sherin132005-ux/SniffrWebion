@@ -145,11 +145,6 @@ export default function HomePage() {
   const [showReportConfirm, setShowReportConfirm] = useState(false);
   const [isSubmittingReport, setIsSubmittingReport] = useState(false);
 
-  // Edit Post states
-  const [editPost, setEditPost] = useState(null);
-  const [editCaption, setEditCaption] = useState('');
-  const [editSaving, setEditSaving] = useState(false);
-
   // Double-tap like animation
   const [doubleTapPost, setDoubleTapPost] = useState(null);
   const lastTapRef = useRef({});
@@ -202,23 +197,6 @@ export default function HomePage() {
     } catch (e) {
       console.error(e);
       showToast('Failed to delete memory.');
-    }
-  };
-
-  // ── Edit Post Handler ──────────────────────────────────────
-  const handleSaveEdit = async () => {
-    if (!editPost) return;
-    setEditSaving(true);
-    try {
-      const res = await api.put(`/posts/${editPost.id}`, { caption: editCaption });
-      setPosts(prev => prev.map(p => p.id === editPost.id ? { ...p, caption: res.post.caption } : p));
-      showToast('🐾 Post updated!');
-      setEditPost(null);
-    } catch (e) {
-      console.error(e);
-      showToast('Failed to update post.');
-    } finally {
-      setEditSaving(false);
     }
   };
 
@@ -425,6 +403,12 @@ export default function HomePage() {
     };
 
     const handlePostLiked = ({ post_id, like_count }) => {
+      // Skip while this client has its own /like request in flight for this
+      // post -- that request's own response is the source of truth and will
+      // land right after; applying this broadcast first (it's an echo of
+      // every like/unlike, including this client's) is what caused the
+      // count to visibly flicker/revert on a quick re-tap.
+      if (likeSeqRef.current[post_id]) return;
       setPosts(prev => prev.map(p => p.id === post_id ? { ...p, like_count } : p));
     };
 
@@ -533,6 +517,15 @@ export default function HomePage() {
   };
 
   // ── Post Actions ───────────────────────────────────────────
+  // Rapid re-tapping (or a slow like-notification round trip racing a quick
+  // unlike right after) can land two /like responses out of order -- without
+  // a guard, the OLDER response can arrive last and stomp the state a newer
+  // tap already set, which is exactly the "glitchy / reverts itself" feel.
+  // likeSeqRef tracks the latest request per post so a stale response (and
+  // the live 'post_liked' broadcast echoing this client's own action) is
+  // dropped instead of applied.
+  const likeSeqRef = useRef({});
+
   const toggleLike = async (postId) => {
     setPosts(prev => prev.map(p => {
       if (p.id === postId) {
@@ -543,10 +536,16 @@ export default function HomePage() {
       return p;
     }));
 
+    const seq = (likeSeqRef.current[postId] || 0) + 1;
+    likeSeqRef.current[postId] = seq;
+
     try {
       const d = await api.post(`/posts/${postId}/like`);
+      if (likeSeqRef.current[postId] !== seq) return; // superseded by a newer tap
+      likeSeqRef.current[postId] = 0; // settled -- live broadcasts for this post can apply again
       setPosts(prev => prev.map(p => p.id === postId ? { ...p, is_liked: d.liked ? 1 : 0, like_count: d.likeCount } : p));
     } catch (e) {
+      if (likeSeqRef.current[postId] === seq) likeSeqRef.current[postId] = 0;
       console.error(e);
     }
   };
@@ -609,7 +608,7 @@ export default function HomePage() {
 
   // Lock body scroll when any modal is open to freeze feed position
   useEffect(() => {
-    const isModalOpen = sharePost || reportPost || showCreate || reactionPost || editPost;
+    const isModalOpen = sharePost || reportPost || showCreate || reactionPost;
     if (isModalOpen) {
       const html = document.documentElement;
       const scrollY = window.scrollY;
@@ -622,7 +621,7 @@ export default function HomePage() {
         window.scrollTo(0, scrollY);
       };
     }
-  }, [sharePost, reportPost, showCreate, reactionPost, editPost]);
+  }, [sharePost, reportPost, showCreate, reactionPost]);
 
   // ── Share Sheet Setup & Helpers ─────────────────────────────
   const openShareSheet = (post) => {
@@ -1282,20 +1281,9 @@ export default function HomePage() {
                                 </button>
                                 {isPostOwner ? (
                                   <>
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                        setEditPost(post);
-                                        setEditCaption(post.caption || '');
-                                        setOptionsPost(null);
-                                      }}
-                                      className="w-full text-left px-4 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 text-xs font-bold text-on-surface-variant flex items-center gap-2 transition-all active:scale-[0.98] border-t border-zinc-100/50 cursor-pointer"
-                                    >
-                                      <span className="material-symbols-outlined text-sm text-zinc-400">edit</span>
-                                      <span>Edit</span>
-                                    </button>
+                                    {/* Edit lives on the "Me" page (ProfilePage's gallery) only --
+                                        editing your own post from the Home feed was a bug, not a
+                                        feature: this menu still offers Copy Link / Delete here. */}
                                     <button
                                       type="button"
                                       onClick={(e) => {
@@ -1585,50 +1573,6 @@ export default function HomePage() {
         </div>
       )}
 
-      {/* Edit Post Modal */}
-      {editPost && (
-        <div className="fixed inset-0 z-[99999] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in" onClick={(e) => e.target === e.currentTarget && !editSaving && setEditPost(null)}>
-          <div className="bg-white dark:bg-zinc-900 rounded-[2.5rem] p-6 sm:p-8 max-w-sm w-full shadow-2xl border border-outline-variant/20 space-y-4 animate-scale-up">
-            <div className="flex items-center justify-between">
-              <h3 className="font-extrabold text-base text-on-surface flex items-center gap-2">
-                <span className="material-symbols-outlined text-primary">edit</span> Edit Post
-              </h3>
-              <button
-                onClick={() => !editSaving && setEditPost(null)}
-                disabled={editSaving}
-                className="w-8 h-8 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 flex items-center justify-center disabled:opacity-50"
-              >
-                <span className="material-symbols-outlined text-base">close</span>
-              </button>
-            </div>
-            <textarea
-              rows={4}
-              value={editCaption}
-              onChange={e => setEditCaption(e.target.value)}
-              placeholder="Update your caption..."
-              className="w-full px-4 py-3 rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-sm font-medium focus:ring-2 focus:ring-primary outline-none resize-none"
-            />
-            <div className="flex gap-2 pt-1">
-              <button
-                type="button"
-                onClick={() => setEditPost(null)}
-                disabled={editSaving}
-                className="flex-1 py-3 bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 font-extrabold text-xs rounded-xl uppercase tracking-wider disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleSaveEdit}
-                disabled={editSaving}
-                className="flex-1 py-3 bg-primary hover:bg-primary-fixed-dim text-white font-extrabold text-xs rounded-xl shadow-md active:scale-95 uppercase tracking-wider disabled:opacity-50"
-              >
-                {editSaving ? 'Saving...' : 'Save Changes'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Notifications Panel */}
       <NotificationsPanel

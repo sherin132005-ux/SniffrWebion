@@ -39,8 +39,9 @@ export default function SettingsModals({ activeModal, onClose, onOpenModal }) {
   const [passwordErrors, setPasswordErrors] = useState({});
   const [passwordLoading, setPasswordLoading] = useState(false);
 
-  // PawPrint Verification (enable-by-email-link) states
-  const [pawLinkSent, setPawLinkSent] = useState(false);
+  // PawPrint Verification (enable-by-email-code) states
+  const [pawCodeSent, setPawCodeSent] = useState(false);
+  const [pawCodeInput, setPawCodeInput] = useState('');
   const [pawCodeLoading, setPawCodeLoading] = useState(false);
   const [pawCodeError, setPawCodeError] = useState('');
   const [pawCodeSuccess, setPawCodeSuccess] = useState('');
@@ -126,25 +127,13 @@ export default function SettingsModals({ activeModal, onClose, onOpenModal }) {
   // Reset the PawPrint modal to its initial step every time it's opened fresh
   useEffect(() => {
     if (activeModal === 'pawprint-2fa') {
-      setPawLinkSent(false);
+      setPawCodeSent(false);
+      setPawCodeInput('');
       setPawCodeError('');
       setPawCodeSuccess('');
       setResendTimer(0);
     }
   }, [activeModal]);
-
-  // If PawPrint gets enabled while this modal is open and waiting on the
-  // emailed link (e.g. the link was clicked in another tab), the live
-  // 'pawprint_enabled' socket event refreshes `user` app-wide -- close out
-  // this modal with a success toast the moment that lands, instead of
-  // leaving it stuck on "check your inbox".
-  useEffect(() => {
-    if (activeModal === 'pawprint-2fa' && pawLinkSent && user?.pawprint_2fa_enabled) {
-      showToast('🐾 PawPrint Verification enabled!');
-      onClose();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.pawprint_2fa_enabled, activeModal, pawLinkSent]);
 
   // Rate Sniffr -- load the live aggregate + this user's own existing
   // rating (if any) fresh each time the modal opens, so a user who already
@@ -212,25 +201,46 @@ export default function SettingsModals({ activeModal, onClose, onOpenModal }) {
     setTimeout(() => setToast(null), 3000);
   };
 
-  // ── PawPrint Verification Handlers (enable-by-email-link) ──
-  // Sends "Verify & Enable PawPrint" link; the account email must already
-  // be verified (server enforces this too -- see EMAIL_NOT_VERIFIED below).
-  const handleSendPawLink = async () => {
+  // ── PawPrint Verification Handlers (enable-by-email-code) ──
+  // Sends a 6-digit Paw Code to the account email; the account email must
+  // already be verified (server enforces this too -- see EMAIL_NOT_VERIFIED
+  // below). Same code mechanism already used for login-time 2FA, just gating
+  // the enable step instead of a session.
+  const handleSendPawCode = async () => {
     setPawCodeLoading(true);
     setPawCodeError('');
     try {
-      const res = await api.post('/auth/pawprint/send-verify-link');
+      const res = await api.post('/auth/2fa/send-code');
       if (res.alreadyEnabled) {
         await refreshProfile();
         showToast('🐾 PawPrint Verification is already enabled!');
         onClose();
         return;
       }
-      setPawLinkSent(true);
+      setPawCodeSent(true);
+      setPawCodeInput('');
       setResendTimer(60);
-      showToast(res.message || 'Check your inbox for the PawPrint verification link.');
+      showToast(res.message || 'Check your inbox for the Paw Code.');
     } catch (err) {
-      setPawCodeError(err.message || 'Failed to send verification email.');
+      setPawCodeError(err.message || 'Failed to send verification code.');
+    } finally {
+      setPawCodeLoading(false);
+    }
+  };
+
+  // Confirms the code and flips PawPrint 2FA on -- the code must match the
+  // one just emailed, same as the login-time verification.
+  const handleVerifyPawCode = async (e) => {
+    e.preventDefault();
+    setPawCodeLoading(true);
+    setPawCodeError('');
+    try {
+      await api.post('/auth/2fa/verify-enable', { code: pawCodeInput });
+      await refreshProfile();
+      showToast('🐾 PawPrint Verification enabled!');
+      onClose();
+    } catch (err) {
+      setPawCodeError(err.message || 'The Paw Code is incorrect or has expired.');
     } finally {
       setPawCodeLoading(false);
     }
@@ -501,40 +511,62 @@ export default function SettingsModals({ activeModal, onClose, onOpenModal }) {
                   </button>
                   <p className="text-[10px] text-zinc-400 text-center">Already verified? Come back and toggle PawPrint on again.</p>
                 </div>
-              ) : !pawLinkSent ? (
+              ) : !pawCodeSent ? (
                 <div className="pt-2">
                   <button
-                    onClick={handleSendPawLink}
+                    onClick={handleSendPawCode}
                     disabled={pawCodeLoading}
                     className="w-full py-3.5 bg-primary hover:bg-primary/90 text-white font-extrabold text-xs rounded-xl shadow-md active:scale-95 transition-transform disabled:opacity-50 flex items-center justify-center gap-2"
                   >
                     {pawCodeLoading ? (
                       <span className="material-symbols-outlined text-base animate-spin">sync</span>
                     ) : (
-                      <span>🐾 Send Verification Email</span>
+                      <span>🐾 Send Paw Code</span>
                     )}
                   </button>
                 </div>
               ) : (
-                <div className="space-y-4 pt-1 text-center">
-                  <div className="p-4 bg-zinc-50 dark:bg-zinc-800 rounded-2xl">
-                    <p className="text-xs font-bold text-on-surface">Check your inbox 📬</p>
-                    <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-1">
-                      Click <strong>"Verify & Enable PawPrint"</strong> in the email we sent to {user?.email}. This page updates automatically once you do.
-                    </p>
-                  </div>
+                <form onSubmit={handleVerifyPawCode} className="space-y-4 pt-1">
+                  <p className="text-[11px] text-zinc-500 dark:text-zinc-400 text-center">
+                    A 6-digit Paw Code was sent to <strong className="text-on-surface">{user?.email}</strong>. Enter it below to turn PawPrint Verification on.
+                  </p>
+
+                  <input
+                    type="text"
+                    maxLength="6"
+                    autoFocus
+                    required
+                    value={pawCodeInput}
+                    onChange={(e) => { setPawCodeInput(e.target.value.replace(/[^0-9]/g, '')); setPawCodeError(''); }}
+                    placeholder="Enter the Paw Code"
+                    className="w-full px-4 py-3 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-base font-extrabold text-center tracking-[0.3em] text-on-surface focus:outline-none focus:ring-2 focus:ring-primary"
+                  />
 
                   <button
-                    type="button"
-                    onClick={handleSendPawLink}
-                    disabled={resendTimer > 0 || pawCodeLoading}
-                    className={`text-xs font-bold transition-colors ${
-                      resendTimer > 0 ? 'text-zinc-400 cursor-not-allowed' : 'text-primary hover:underline'
-                    }`}
+                    type="submit"
+                    disabled={pawCodeLoading || pawCodeInput.length < 6}
+                    className="w-full py-3.5 bg-primary hover:bg-primary/90 text-white font-extrabold text-xs rounded-xl shadow-md active:scale-95 transition-transform disabled:opacity-50 flex items-center justify-center gap-2"
                   >
-                    {resendTimer > 0 ? `Resend Email (${resendTimer}s)` : '🐾 Resend Email'}
+                    {pawCodeLoading ? (
+                      <span className="material-symbols-outlined text-base animate-spin">sync</span>
+                    ) : (
+                      <span>Verify & Enable</span>
+                    )}
                   </button>
-                </div>
+
+                  <div className="text-center">
+                    <button
+                      type="button"
+                      onClick={handleSendPawCode}
+                      disabled={resendTimer > 0 || pawCodeLoading}
+                      className={`text-xs font-bold transition-colors ${
+                        resendTimer > 0 ? 'text-zinc-400 cursor-not-allowed' : 'text-primary hover:underline'
+                      }`}
+                    >
+                      {resendTimer > 0 ? `Resend Code (${resendTimer}s)` : '🐾 Resend Code'}
+                    </button>
+                  </div>
+                </form>
               )}
             </div>
           </div>

@@ -3,7 +3,7 @@ import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../context/SocketContext';
 import api from '../services/api';
-import { getCurrentGPSLocation, getStoredLocation } from '../services/locationService';
+import { getCurrentGPSLocation, getStoredLocation, watchLiveLocation } from '../services/locationService';
 import { getCapabilityStatus, requestSystemPermission } from '../services/permissionService';
 import CreatePostModal from '../components/CreatePostModal';
 import PawsitiveModal, { getPawsitiveLabel } from '../components/PawsitiveModal';
@@ -72,6 +72,10 @@ export default function ProfilePage() {
   const [liveLocationText, setLiveLocationText] = useState(null);
   const [detectingLocation, setDetectingLocation] = useState(false);
   const [locationError, setLocationError] = useState('');
+  // Holds the "stop tracking" function returned by watchLiveLocation while a
+  // watch is active, so it can be torn down on unmount / re-run instead of
+  // leaking a geolocation watch every time this effect re-fires.
+  const stopWatchRef = useRef(null);
 
   // Moved up from its old spot near the render return so the live-location
   // effect below (and any other hook) can read it -- hooks can't be
@@ -98,9 +102,9 @@ export default function ProfilePage() {
     api.post(`/profile/${pet.id}/view`).catch(err => console.error('Failed to record profile view:', err));
   }, [pet, user]);
 
-  // ── Live location detection (owner's own profile only) ─────────
+  // ── Live location tracking (owner's own profile only) ─────────
   // Display-only "where you are right now" -- never written back to
-  // pet.location_text (the API is never called from here). Only fires
+  // pet.location_text (the API is never called from here). Only starts
   // silently on mount when permission was ALREADY granted in a past visit --
   // it never calls requestSystemPermission itself. Several browsers (notably
   // iOS Safari) silently ignore/timeout a geolocation prompt that wasn't
@@ -108,38 +112,46 @@ export default function ProfilePage() {
   // used to fail to ever display: the request fired from this background
   // effect, with no click behind it. Requesting the actual permission now
   // only ever happens from handleDetectLiveLocation, wired to a button tap.
+  // Once running, this keeps updating as the user physically moves (via
+  // watchLiveLocation's watchPosition) -- no manual refresh needed.
+  const startLiveLocationWatch = () => {
+    stopWatchRef.current?.(); // never run two watches at once
+    stopWatchRef.current = watchLiveLocation(
+      (loc) => {
+        const liveText = [loc.area, loc.city].filter(Boolean).join(', ');
+        if (liveText) setLiveLocationText(liveText);
+      },
+      (err) => console.warn('Live location tracking unavailable:', err)
+    );
+  };
+
   useEffect(() => {
     if (!isOwner || !pet) return;
     let cancelled = false;
 
     (async () => {
-      try {
-        const status = await getCapabilityStatus('location');
-        if (status !== 'granted' || cancelled) return;
-
-        // Same GPS + reverse-geocode call the Edit Profile GPS button uses.
-        const loc = await getCurrentGPSLocation();
-        if (cancelled) return;
-        const liveText = [loc.area, loc.city].filter(Boolean).join(', ');
-        if (liveText) setLiveLocationText(liveText);
-      } catch (err) {
-        // Unavailable or the lookup failed/timed out -- saved location_text
-        // (or the "set your location" prompt) already rendered stays as-is.
-        console.warn('Live location detection unavailable:', err);
-      }
+      const status = await getCapabilityStatus('location');
+      if (status !== 'granted' || cancelled) return;
+      startLiveLocationWatch();
     })();
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      stopWatchRef.current?.();
+      stopWatchRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOwner, pet?.id]);
 
   // ── Explicit "set/refresh my location" action ───────────────────
   // Triggered directly by a button click (a real user gesture, required by
   // some browsers for geolocation prompts to fire at all) -- requests
-  // permission if needed, reads GPS, reverse-geocodes, and updates the
-  // display immediately. This is the ONLY thing "Set your location" needs;
-  // it deliberately does not touch Edit Profile, since that form's saved
-  // location is a separate, rarely-changed field for matching, not this
-  // live "where are you right now" indicator.
+  // permission if needed, reads an immediate GPS fix for instant feedback,
+  // then starts continuous tracking so it keeps updating as the user moves
+  // without needing another click. This is the ONLY thing "Set your
+  // location" needs; it deliberately does not touch Edit Profile, since
+  // that form's saved location is a separate, rarely-changed field for
+  // matching, not this live "where are you right now" indicator.
   const handleDetectLiveLocation = async () => {
     setDetectingLocation(true);
     setLocationError('');
@@ -156,6 +168,7 @@ export default function ProfilePage() {
       } else {
         setLocationError("Couldn't determine your area from that location. Please try again.");
       }
+      startLiveLocationWatch();
     } catch (err) {
       console.warn('Live location detection failed:', err);
       setLocationError('Could not access your location. Please try again.');
@@ -222,10 +235,11 @@ export default function ProfilePage() {
     if (!socket || !pet) return;
 
     const handlePostLiked = (data) => {
+      // Server payload is { post_id, liked, like_count }.
       setPosts(prev => {
-        const postExists = prev.some(p => p.id === data.postId);
+        const postExists = prev.some(p => p.id === data.post_id);
         if (!postExists) return prev;
-        const updated = prev.map(p => p.id === data.postId ? { ...p, like_count: data.likeCount } : p);
+        const updated = prev.map(p => p.id === data.post_id ? { ...p, like_count: data.like_count } : p);
         const total = updated.reduce((sum, curr) => sum + (curr.like_count || 0), 0);
         setStats(s => ({ ...s, likes: total }));
         return updated;
@@ -454,13 +468,27 @@ export default function ProfilePage() {
                         {isOwner && (
                           <button
                             type="button"
-                            onClick={handleDetectLiveLocation}
+                            onClick={() => {
+                              // Already tracking live -- just force a fresh
+                              // read. Otherwise this is the "declined /
+                              // never granted" fallback (showing the saved
+                              // location instead): changing their mind here
+                              // must go through the exact same explanatory
+                              // popup + permission flow as "Set your
+                              // location" did the first time, not silently
+                              // re-request permission behind their back.
+                              if (liveLocationText) {
+                                handleDetectLiveLocation();
+                              } else {
+                                setShowLocationInfoModal(true);
+                              }
+                            }}
                             disabled={detectingLocation}
-                            title="Refresh my live location"
+                            title={liveLocationText ? 'Refresh my live location' : 'Set your live location'}
                             className="text-zinc-400 hover:text-primary transition-colors disabled:opacity-50"
                           >
                             <span className={`material-symbols-outlined text-sm ${detectingLocation ? 'animate-spin' : ''}`}>
-                              {detectingLocation ? 'sync' : 'my_location'}
+                              {detectingLocation ? 'sync' : liveLocationText ? 'my_location' : 'location_on'}
                             </span>
                           </button>
                         )}
@@ -590,12 +618,29 @@ export default function ProfilePage() {
                   onMouseEnter={() => setHoveredPost(post.id)}
                   onMouseLeave={() => setHoveredPost(null)}
                 >
-                  <img
-                    className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
-                    src={post.media_url}
-                    alt={post.caption || 'Gallery image'}
-                    loading="lazy"
-                  />
+                  {post.media_type === 'video' ? (
+                    <video
+                      className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                      src={post.media_url}
+                      muted
+                      playsInline
+                      preload="metadata"
+                    />
+                  ) : (
+                    <img
+                      className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                      src={post.media_url}
+                      alt={post.caption || 'Gallery image'}
+                      loading="lazy"
+                    />
+                  )}
+                  {/* Video badge -- gallery thumbnails never autoplay, this just
+                      signals "this tile is a video" before the viewer opens it */}
+                  {post.media_type === 'video' && (
+                    <div className="absolute top-2 left-2 w-6 h-6 rounded-full bg-black/50 backdrop-blur-sm flex items-center justify-center pointer-events-none">
+                      <span className="material-symbols-outlined text-white text-[14px]" style={{ fontVariationSettings: "'FILL' 1" }}>play_arrow</span>
+                    </div>
+                  )}
                   {/* Like count overlay */}
                   <div className="absolute bottom-2 right-2 flex items-center gap-1 bg-black/40 backdrop-blur-sm rounded-full px-2 py-1">
                     <span className="material-symbols-outlined text-white text-[12px]" style={{ fontVariationSettings: "'FILL' 1" }}>favorite</span>
@@ -803,6 +848,9 @@ export default function ProfilePage() {
               setStats(s => ({ ...s, likes: total }));
               return updated;
             });
+          }}
+          onPostUpdated={(postId, caption) => {
+            setPosts(prev => prev.map(p => p.id === postId ? { ...p, caption } : p));
           }}
         />
       )}

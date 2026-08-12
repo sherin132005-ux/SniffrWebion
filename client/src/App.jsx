@@ -21,7 +21,6 @@ const PrivacyPage       = lazy(() => import('./pages/PrivacyPage'));
 const TermsPage         = lazy(() => import('./pages/TermsPage'));
 const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage'));
 const VerifyEmailPage   = lazy(() => import('./pages/VerifyEmailPage'));
-const VerifyPawprintPage = lazy(() => import('./pages/VerifyPawprintPage'));
 const CommunityPage     = lazy(() => import('./pages/CommunityPage'));
 const CreateCommunityPage = lazy(() => import('./pages/CreateCommunityPage'));
 
@@ -151,7 +150,6 @@ export default function App() {
           <Route path="/terms" element={<TermsPage />} />
           <Route path="/reset-password" element={<ResetPasswordPage />} />
           <Route path="/verify-email" element={<VerifyEmailPage />} />
-          <Route path="/verify-pawprint" element={<VerifyPawprintPage />} />
 
           {/* Protected Onboarding */}
           <Route

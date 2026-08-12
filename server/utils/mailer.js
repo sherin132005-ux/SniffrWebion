@@ -6,10 +6,14 @@ let transporter = null;
 function getTransporter() {
   if (transporter) return transporter;
 
+  const port = parseInt(process.env.SMTP_PORT) || 587;
   transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST,
-    port: parseInt(process.env.SMTP_PORT) || 587,
-    secure: false, // true for 465, false for other ports (587 uses STARTTLS)
+    port,
+    // SMTP_SECURE lets a domain provider that needs implicit TLS (typically
+    // port 465) opt in explicitly; otherwise this defaults sensibly off
+    // port number (465 = implicit TLS, everything else incl. 587 = STARTTLS).
+    secure: process.env.SMTP_SECURE ? process.env.SMTP_SECURE === 'true' : port === 465,
     auth: {
       user: process.env.SMTP_USER,
       pass: process.env.SMTP_PASS,
@@ -40,8 +44,15 @@ export async function sendEmail({ to, subject, html, text }) {
   }
 
   try {
+    // SMTP_FROM_EMAIL/SMTP_FROM_NAME let the visible sender be a real domain
+    // address (e.g. noreply@yourdomain.com) that differs from the SMTP auth
+    // user -- required by providers like SendGrid/SES/Mailgun where the auth
+    // user is an API key/account id, not the address mail should appear from.
+    // Falls back to SMTP_USER so nothing breaks for setups that don't set them.
+    const fromName = process.env.SMTP_FROM_NAME || 'Sniffr 🐾';
+    const fromEmail = process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER;
     const info = await getTransporter().sendMail({
-      from: `"Sniffr 🐾" <${process.env.SMTP_USER}>`,
+      from: `"${fromName}" <${fromEmail}>`,
       to,
       subject,
       text,
@@ -82,23 +93,6 @@ export async function sendPasswordResetEmail(toEmail, resetLink) {
         <p>Click the button below to reset your Sniffr password:</p>
         <a href="${resetLink}" style="display: inline-block; padding: 12px 24px; background: #8E2E43; color: white; text-decoration: none; border-radius: 24px; font-weight: bold;">Reset Password</a>
         <p style="color: #666; font-size: 14px; margin-top: 16px;">This link expires in 1 hour. If you didn't request this, you can safely ignore this email.</p>
-      </div>
-    `,
-  });
-}
-
-export async function sendPawprintVerifyLinkEmail(toEmail, verifyLink) {
-  return sendEmail({
-    to: toEmail,
-    subject: '🐾 Verify & Enable PawPrint Verification',
-    text: `Confirm you want to enable PawPrint Verification (2FA) on your Sniffr account: ${verifyLink}\n\nThis link expires in 1 hour. If you didn't request this, you can safely ignore this email.`,
-    html: `
-      <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
-        <h2 style="color: #8E2E43;">🐾 Sniffr PawPrint Verification</h2>
-        <p>You asked to enable <strong>PawPrint Verification</strong> — an extra layer of protection that requires a one-time code when signing in from a new device.</p>
-        <p>Click the button below to confirm and turn it on:</p>
-        <a href="${verifyLink}" style="display: inline-block; padding: 12px 24px; background: #8E2E43; color: white; text-decoration: none; border-radius: 24px; font-weight: bold; margin: 12px 0;">Verify & Enable PawPrint</a>
-        <p style="color: #666; font-size: 14px; margin-top: 16px;">This link expires in 1 hour and can only be used once. If you didn't request this, you can safely ignore this email — PawPrint will stay off.</p>
       </div>
     `,
   });

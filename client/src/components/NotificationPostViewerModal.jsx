@@ -86,6 +86,8 @@ export default function NotificationPostViewerModal({ postId, autoOpenComments =
   const [deleteConfirmPost, setDeleteConfirmPost] = useState(null);
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [copyToast, setCopyToast] = useState(null);
+  // Sequence guard for the like race described where toggleLike is defined.
+  const likeSeqRef = useRef(0);
 
   const handleDeletePost = async (pId) => {
     try {
@@ -134,8 +136,13 @@ export default function NotificationPostViewerModal({ postId, autoOpenComments =
     if (!socket || !postId) return;
 
     const handlePostLiked = (data) => {
-      if (data.postId === parseInt(postId, 10)) {
-        setPost(prev => prev ? { ...prev, is_liked: data.isLiked ? 1 : 0, like_count: data.likeCount } : prev);
+      // Server payload is { post_id, liked, like_count } -- and while a
+      // local /like request for this post is in flight, that request's own
+      // response is authoritative; applying this broadcast (an echo of
+      // every like/unlike, including this client's own) in between is what
+      // caused a quick re-tap to visibly flicker/revert.
+      if (data.post_id === parseInt(postId, 10) && !likeSeqRef.current) {
+        setPost(prev => prev ? { ...prev, is_liked: data.liked ? 1 : 0, like_count: data.like_count } : prev);
       }
     };
 
@@ -167,16 +174,27 @@ export default function NotificationPostViewerModal({ postId, autoOpenComments =
     };
   }, [socket, postId]);
 
+  // Guards against a rapid re-tap's earlier /like response landing after a
+  // later one and stomping the state it already set (see HomePage.jsx's
+  // toggleLike for the full explanation of this race).
   const toggleLike = async () => {
     if (!post) return;
     const isLiked = post.is_liked ? 0 : 1;
     const count = post.is_liked ? Math.max(0, post.like_count - 1) : post.like_count + 1;
     setPost(prev => prev ? { ...prev, is_liked: isLiked, like_count: count } : prev);
 
+    const seq = likeSeqRef.current + 1;
+    likeSeqRef.current = seq;
+
     try {
       const d = await api.post(`/posts/${post.id}/like`);
+      if (likeSeqRef.current !== seq) return; // superseded by a newer tap
+      likeSeqRef.current = 0; // settled -- live broadcasts can apply again
       setPost(prev => prev ? { ...prev, is_liked: d.liked ? 1 : 0, like_count: d.likeCount } : prev);
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      if (likeSeqRef.current === seq) likeSeqRef.current = 0;
+      console.error(e);
+    }
   };
 
   const likePostOnly = async () => {

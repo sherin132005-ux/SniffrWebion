@@ -11,7 +11,7 @@ import {
 } from '../middleware/auth.js';
 import { rateLimiter } from '../middleware/rateLimiter.js';
 import config from '../config.js';
-import { sendPawCodeEmail, sendPasswordResetEmail, sendVerificationEmail, sendPawprintVerifyLinkEmail } from '../utils/mailer.js';
+import { sendPawCodeEmail, sendPasswordResetEmail, sendVerificationEmail } from '../utils/mailer.js';
 import db from '../db/connection.js';
 import { grantLaunchOfferIfEligible, getUserWithFreshPlanState } from '../services/subscriptionService.js';
 import { sendServerError } from '../utils/errors.js';
@@ -443,7 +443,7 @@ router.post('/login', async (req, res) => {
         // Device is untrusted: Generate Paw Code & 10m temp token
         const code = Math.floor(100000 + Math.random() * 900000).toString();
         const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
-        await UserRepo.setPawCode(user.id, code, expiresAt);
+        await UserRepo.setPawCode(user.id, hashToken(code), expiresAt);
         if (!process.env.SMTP_USER) console.log(`[DEV ONLY] PawPrint code for ${user.email}: ${code}`);
         sendPawCodeEmail(user.email, code).catch(err => console.error("[sendPawCodeEmail error]:", err.message));
 
@@ -467,20 +467,79 @@ router.post('/login', async (req, res) => {
 // PAWPRINT VERIFICATION (2FA) ENDPOINTS
 // ═══════════════════════════════════════════════════════════════
 
+// Shared cooldown tracker for the "send a code to enable PawPrint" step --
+// same synchronous-set-before-await shape as verificationCooldowns
+// elsewhere in this file, so a rapid double-tap can't generate two
+// different codes for the same pair of requests.
+const pawprintEnableCodeCooldowns = new Map(); // userId -> last-sent timestamp
+const PAWPRINT_ENABLE_CODE_COOLDOWN_MS = 60 * 1000;
+
+// Brute-force guard shared by both code-verification endpoints
+// (/2fa/verify-enable and /2fa/verify-login) -- a 6-digit code is only
+// ~1e6 possibilities, so without this a script could just try all of them
+// inside the 10-minute window. After PAW_CODE_MAX_ATTEMPTS wrong guesses,
+// the account is locked out of verifying (existing or future codes) for
+// PAW_CODE_LOCKOUT_MS regardless of how many new codes get requested in the
+// meantime -- requesting a new code does not clear an active lock.
+const pawCodeAttempts = new Map(); // userId -> { count, lockedUntil }
+const PAW_CODE_MAX_ATTEMPTS = 5;
+const PAW_CODE_LOCKOUT_MS = 15 * 60 * 1000;
+
+function pawCodeLockSecondsRemaining(userId) {
+  const rec = pawCodeAttempts.get(userId);
+  if (rec?.lockedUntil && rec.lockedUntil > Date.now()) {
+    return Math.ceil((rec.lockedUntil - Date.now()) / 1000);
+  }
+  return 0;
+}
+
+function registerPawCodeFailure(userId) {
+  const rec = pawCodeAttempts.get(userId) || { count: 0, lockedUntil: 0 };
+  rec.count += 1;
+  if (rec.count >= PAW_CODE_MAX_ATTEMPTS) {
+    rec.count = 0;
+    rec.lockedUntil = Date.now() + PAW_CODE_LOCKOUT_MS;
+  }
+  pawCodeAttempts.set(userId, rec);
+}
+
+function clearPawCodeAttempts(userId) {
+  pawCodeAttempts.delete(userId);
+}
+
 // 1. Send Paw Code for Enablement (Authenticated)
 router.post('/2fa/send-code', authenticateAccess, async (req, res) => {
   try {
     const user = await UserRepo.findById(req.user.id);
     if (!user) return res.status(404).json({ error: 'USER_NOT_FOUND' });
+    if (user.pawprint_2fa_enabled) {
+      return res.json({ success: true, alreadyEnabled: true, message: 'PawPrint Verification is already enabled! 🐾' });
+    }
+    if (!user.email_verified) {
+      return res.status(400).json({ error: 'EMAIL_NOT_VERIFIED', message: 'Please verify your account email first, then enable PawPrint.' });
+    }
+
+    const now = Date.now();
+    const lastSent = pawprintEnableCodeCooldowns.get(user.id);
+    if (lastSent && now - lastSent < PAWPRINT_ENABLE_CODE_COOLDOWN_MS) {
+      const waitSeconds = Math.ceil((lastSent + PAWPRINT_ENABLE_CODE_COOLDOWN_MS - now) / 1000);
+      return res.status(429).json({
+        error: 'COOLDOWN',
+        message: `Please wait ${waitSeconds}s before requesting another code.`,
+        cooldownUntil: lastSent + PAWPRINT_ENABLE_CODE_COOLDOWN_MS,
+        waitSeconds,
+      });
+    }
+    pawprintEnableCodeCooldowns.set(user.id, now);
 
     const code = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 mins
-    await UserRepo.setPawCode(user.id, code, expiresAt);
+    const expiresAt = new Date(now + 10 * 60 * 1000).toISOString(); // 10 mins
+    await UserRepo.setPawCode(user.id, hashToken(code), expiresAt);
 
     if (!process.env.SMTP_USER) console.log(`[DEV ONLY] PawPrint code for ${user.email}: ${code}`);
     sendPawCodeEmail(user.email, code).catch(err => console.error("[sendPawCodeEmail error]:", err.message));
 
-    return res.json({ success: true, message: 'Paw Code sent to your registered email.' });
+    return res.json({ success: true, message: 'Paw Code sent to your registered email.', cooldownUntil: now + PAWPRINT_ENABLE_CODE_COOLDOWN_MS });
   } catch (err) {
     console.error('[/2fa/send-code error]:', err);
     res.status(500).json({ error: 'SERVER_ERROR', message: 'Failed to send Paw Code.' });
@@ -495,12 +554,18 @@ router.post('/2fa/verify-enable', authenticateAccess, async (req, res) => {
       return res.status(400).json({ error: 'MISSING_CODE', message: 'Please enter the Paw Code.' });
     }
 
+    const lockedSeconds = pawCodeLockSecondsRemaining(req.user.id);
+    if (lockedSeconds > 0) {
+      return res.status(429).json({ error: 'LOCKED', message: `Too many incorrect attempts. Try again in ${lockedSeconds}s.`, waitSeconds: lockedSeconds });
+    }
+
     const pawData = await UserRepo.getPawCode(req.user.id);
     if (!pawData || !pawData.paw_code) {
       return res.status(400).json({ error: 'INVALID_CODE', message: 'No verification code requested. Please request a new code.' });
     }
 
-    if (pawData.paw_code !== code.trim()) {
+    if (pawData.paw_code !== hashToken(code.trim())) {
+      registerPawCodeFailure(req.user.id);
       return res.status(400).json({ error: 'INVALID_CODE', message: 'The Paw Code is incorrect or has expired. Please try again.' });
     }
 
@@ -510,6 +575,7 @@ router.post('/2fa/verify-enable', authenticateAccess, async (req, res) => {
 
     await UserRepo.set2FAStatus(req.user.id, 1);
     await UserRepo.clearPawCode(req.user.id);
+    clearPawCodeAttempts(req.user.id);
 
     return res.json({ success: true, message: 'PawPrint Verification enabled successfully! 🐾' });
   } catch (err) {
@@ -524,6 +590,7 @@ router.post('/2fa/disable', authenticateAccess, async (req, res) => {
     await UserRepo.set2FAStatus(req.user.id, 0);
     await UserRepo.clearPawCode(req.user.id);
     await UserRepo.clearTrustedDevices(req.user.id);
+    clearPawCodeAttempts(req.user.id);
     return res.json({ success: true, message: 'PawPrint Verification disabled.' });
   } catch (err) {
     console.error('[/2fa/disable error]:', err);
@@ -553,8 +620,14 @@ router.post('/2fa/verify-login', async (req, res) => {
     const user = await UserRepo.findById(decoded.id);
     if (!user) return res.status(404).json({ error: 'USER_NOT_FOUND' });
 
+    const lockedSeconds = pawCodeLockSecondsRemaining(user.id);
+    if (lockedSeconds > 0) {
+      return res.status(429).json({ error: 'LOCKED', message: `Too many incorrect attempts. Try again in ${lockedSeconds}s.`, waitSeconds: lockedSeconds });
+    }
+
     const pawData = await UserRepo.getPawCode(user.id);
-    if (!pawData || !pawData.paw_code || pawData.paw_code !== code.trim()) {
+    if (!pawData || !pawData.paw_code || pawData.paw_code !== hashToken(code.trim())) {
+      registerPawCodeFailure(user.id);
       return res.status(400).json({ error: 'INVALID_CODE', message: 'The Paw Code is incorrect or has expired. Please try again.' });
     }
 
@@ -564,6 +637,7 @@ router.post('/2fa/verify-login', async (req, res) => {
 
     // Code is valid! Clear code.
     await UserRepo.clearPawCode(user.id);
+    clearPawCodeAttempts(user.id);
 
     let newDeviceToken = null;
     if (trustDevice) {
@@ -612,7 +686,7 @@ router.post('/2fa/resend-code', async (req, res) => {
 
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
-    await UserRepo.setPawCode(user.id, code, expiresAt);
+    await UserRepo.setPawCode(user.id, hashToken(code), expiresAt);
 
     if (!process.env.SMTP_USER) console.log(`[DEV ONLY] PawPrint code (resent) for ${user.email}: ${code}`);
     sendPawCodeEmail(user.email, code).catch(err => console.error("[sendPawCodeEmail error]:", err.message));
@@ -621,102 +695,6 @@ router.post('/2fa/resend-code', async (req, res) => {
   } catch (err) {
     console.error('[/2fa/resend-code error]:', err);
     res.status(500).json({ error: 'SERVER_ERROR', message: 'Failed to resend Paw Code.' });
-  }
-});
-
-// ═══════════════════════════════════════════════════════════════
-// PAWPRINT VERIFICATION — ENABLE-BY-EMAIL-LINK
-// Turning PawPrint ON is confirmed via a clicked "Verify & Enable PawPrint"
-// email link (a deliberate, single-use, time-limited token -- same shape as
-// account email verification), NOT the 6-digit code above. That code flow
-// is untouched and still used for login-time 2FA (/2fa/verify-login,
-// /2fa/resend-code) and remains the mechanism once PawPrint is already on.
-// ═══════════════════════════════════════════════════════════════
-const pawprintLinkCooldowns = new Map(); // userId -> last-sent timestamp
-const PAWPRINT_LINK_COOLDOWN_MS = 60 * 1000;
-const PAWPRINT_LINK_EXPIRY_MS = 60 * 60 * 1000; // 1 hour -- shorter-lived than account verification since it grants a security feature
-
-async function triggerPawprintVerifyLink(user) {
-  const now = Date.now();
-  const lastSent = pawprintLinkCooldowns.get(user.id);
-  if (lastSent && now - lastSent < PAWPRINT_LINK_COOLDOWN_MS) {
-    return { sent: false, throttled: true, cooldownUntil: lastSent + PAWPRINT_LINK_COOLDOWN_MS };
-  }
-  const cooldownUntil = now + PAWPRINT_LINK_COOLDOWN_MS;
-  pawprintLinkCooldowns.set(user.id, now); // set synchronously before any await -- closes the same race window as triggerVerificationEmail
-
-  // Fire-and-forget -- see triggerVerificationEmail for why this must never
-  // be awaited by the caller.
-  (async () => {
-    try {
-      const token = crypto.randomBytes(32).toString('hex');
-      const expiresAt = new Date(now + PAWPRINT_LINK_EXPIRY_MS).toISOString();
-      await UserRepo.setPawprintVerifyToken(user.id, hashToken(token), expiresAt);
-      const verifyLink = `${config.CLIENT_URL || 'http://localhost:5173'}/verify-pawprint?token=${token}`;
-      if (!process.env.SMTP_USER) console.log(`[DEV ONLY] PawPrint verify-link for ${user.email}: ${verifyLink}`);
-      await sendPawprintVerifyLinkEmail(user.email, verifyLink);
-    } catch (err) {
-      console.error('[triggerPawprintVerifyLink error]:', err.message);
-    }
-  })();
-
-  return { sent: true, throttled: false, cooldownUntil };
-}
-
-// POST /api/auth/pawprint/send-verify-link (authenticated)
-router.post('/pawprint/send-verify-link', authenticateAccess, async (req, res) => {
-  try {
-    const user = await UserRepo.findById(req.user.id);
-    if (!user) return res.status(404).json({ error: 'USER_NOT_FOUND' });
-    if (user.pawprint_2fa_enabled) {
-      return res.json({ success: true, alreadyEnabled: true, message: 'PawPrint Verification is already enabled! 🐾' });
-    }
-    if (!user.email_verified) {
-      return res.status(400).json({ error: 'EMAIL_NOT_VERIFIED', message: 'Please verify your account email first, then enable PawPrint.' });
-    }
-
-    const result = await triggerPawprintVerifyLink(user);
-    if (result.throttled) {
-      const waitSeconds = Math.ceil((result.cooldownUntil - Date.now()) / 1000);
-      return res.status(429).json({
-        error: 'COOLDOWN',
-        message: `Please wait ${waitSeconds}s before requesting another verification email.`,
-        cooldownUntil: result.cooldownUntil,
-        waitSeconds,
-      });
-    }
-
-    return res.json({ success: true, message: '🐾 Check your inbox — click the link to enable PawPrint Verification.', cooldownUntil: result.cooldownUntil });
-  } catch (err) {
-    console.error('[/pawprint/send-verify-link error]:', err);
-    res.status(500).json({ error: 'SERVER_ERROR', message: 'Failed to send PawPrint verification email.' });
-  }
-});
-
-// GET /api/auth/pawprint/verify-link?token=... (public -- proof of identity is possession of the emailed link)
-router.get('/pawprint/verify-link', async (req, res) => {
-  try {
-    const { token } = req.query;
-    if (!token) return res.status(400).json({ error: 'MISSING_TOKEN', message: 'Verification token is required.' });
-
-    const user = await UserRepo.findByPawprintVerifyTokenHash(hashToken(token));
-    if (!user) {
-      return res.status(400).json({ error: 'INVALID_TOKEN', message: 'This link is invalid or has already been used.' });
-    }
-    if (!user.pawprint_verify_expires_at || new Date(user.pawprint_verify_expires_at) < new Date()) {
-      return res.status(400).json({ error: 'EXPIRED_TOKEN', message: 'This link has expired. Please request a new one from Settings.' });
-    }
-
-    await UserRepo.set2FAStatus(user.id, 1);
-    await UserRepo.clearPawprintVerifyToken(user.id);
-
-    const io = req.app.get('io');
-    if (io) io.to(`user_${user.id}`).emit('pawprint_enabled', { userId: user.id });
-
-    return res.json({ success: true, message: '🐾 PawPrint Verification enabled successfully!' });
-  } catch (err) {
-    console.error('[/pawprint/verify-link error]:', err);
-    res.status(500).json({ error: 'SERVER_ERROR', message: 'PawPrint verification encountered a problem.' });
   }
 });
 
