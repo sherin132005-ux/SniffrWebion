@@ -13,6 +13,7 @@ import GalleryViewerModal from '../components/GalleryViewerModal';
 import PremiumBadge from '../components/PremiumBadge';
 import usePullToRefresh from '../hooks/usePullToRefresh';
 import Portal from '../components/Portal';
+import PostVideo from '../components/PostVideo';
 
 export function ChampionCrown({ className = "w-8 h-8" }) {
   return (
@@ -619,12 +620,11 @@ export default function ProfilePage() {
                   onMouseLeave={() => setHoveredPost(null)}
                 >
                   {post.media_type === 'video' ? (
-                    <video
-                      className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                    <PostVideo
                       src={post.media_url}
-                      muted
-                      playsInline
-                      preload="metadata"
+                      controls={false}
+                      fill
+                      className="transition-transform duration-500 group-hover:scale-110"
                     />
                   ) : (
                     <img

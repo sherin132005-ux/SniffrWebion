@@ -7,6 +7,7 @@ import { useSocket } from '../context/SocketContext';
 import CommentModal from './CommentModal';
 import ShareSheetModal from './ShareSheetModal';
 import ReportPostModal from './ReportPostModal';
+import PostVideo from './PostVideo';
 
 // ── Custom SVG Icon Components matching Home Feed ──
 const PawLikeIcon = ({ active, className = '' }) => (
@@ -149,6 +150,12 @@ export default function SharedPostViewerModal({ postId, onClose }) {
       }
     };
 
+    const handleCommentDeleted = (data) => {
+      if (data.post_id === parseInt(postId, 10)) {
+        setPost(prev => prev ? { ...prev, comment_count: Math.max(0, (prev.comment_count || 0) - 1) } : prev);
+      }
+    };
+
     // Same "post deleted elsewhere" staleness risk as the feed/gallery --
     // this modal fetches its post once on mount and otherwise never
     // refreshes, so without this it would keep a deleted post fully
@@ -161,11 +168,13 @@ export default function SharedPostViewerModal({ postId, onClose }) {
 
     socket.on('post_liked', handlePostLiked);
     socket.on('post_commented', handlePostCommented);
+    socket.on('comment_deleted', handleCommentDeleted);
     socket.on('post_deleted', handlePostDeleted);
 
     return () => {
       socket.off('post_liked', handlePostLiked);
       socket.off('post_commented', handlePostCommented);
+      socket.off('comment_deleted', handleCommentDeleted);
       socket.off('post_deleted', handlePostDeleted);
     };
   }, [socket, postId]);
@@ -175,15 +184,24 @@ export default function SharedPostViewerModal({ postId, onClose }) {
   // toggleLike for the full explanation of this race).
   const toggleLike = async () => {
     if (!post) return;
-    const isLiked = post.is_liked ? 0 : 1;
-    const count = post.is_liked ? Math.max(0, post.like_count - 1) : post.like_count + 1;
-    setPost(prev => prev ? { ...prev, is_liked: isLiked, like_count: count } : prev);
+    const postId = post.id;
+    // Computed inside the functional updater (from `prev`, not the outer
+    // `post` closure) so a second toggleLike() call fired moments later
+    // (e.g. a stray double-tap-gesture invocation racing this button's own
+    // click) correctly flips the state IT sees, instead of both calls
+    // reading the same stale pre-tap values and both computing "like".
+    setPost(prev => {
+      if (!prev) return prev;
+      const isLiked = prev.is_liked ? 0 : 1;
+      const count = prev.is_liked ? Math.max(0, prev.like_count - 1) : prev.like_count + 1;
+      return { ...prev, is_liked: isLiked, like_count: count };
+    });
 
     const seq = likeSeqRef.current + 1;
     likeSeqRef.current = seq;
 
     try {
-      const d = await api.post(`/posts/${post.id}/like`);
+      const d = await api.post(`/posts/${postId}/like`);
       if (likeSeqRef.current !== seq) return; // superseded by a newer tap
       likeSeqRef.current = 0; // settled -- live broadcasts can apply again
       setPost(prev => prev ? { ...prev, is_liked: d.liked ? 1 : 0, like_count: d.likeCount } : prev);
@@ -453,7 +471,7 @@ export default function SharedPostViewerModal({ postId, onClose }) {
               {post.media_url && (
                 <div className="relative bg-zinc-50 dark:bg-zinc-800 flex items-center justify-center select-none" style={{ maxHeight: 'min(480px, 70vh)' }}>
                   {post.media_type === 'video' ? (
-                    <video src={post.media_url} controls className="w-full max-h-full object-contain" style={{ maxHeight: 'min(480px, 70vh)' }} />
+                    <PostVideo src={post.media_url} />
                   ) : (
                     <img src={post.media_url} alt={post.caption || 'Memory'} className="w-full max-h-full object-contain" style={{ maxHeight: 'min(480px, 70vh)' }} draggable={false} />
                   )}
@@ -501,6 +519,8 @@ export default function SharedPostViewerModal({ postId, onClose }) {
                   <button
                     type="button"
                     onClick={(e) => { e.stopPropagation(); toggleLike(); }}
+                    onTouchStart={(e) => e.stopPropagation()}
+                    onTouchEnd={(e) => e.stopPropagation()}
                     className="flex items-center gap-2 text-on-surface-variant hover:text-primary transition-all group/btn h-9"
                   >
                     <PawLikeIcon active={post.is_liked} className="w-[22px] h-[22px] group-hover/btn:scale-110" />
@@ -544,7 +564,14 @@ export default function SharedPostViewerModal({ postId, onClose }) {
           postId={commentPostId}
           onClose={() => setCommentPostId(null)}
           onCommentAdded={() => {
-            setPost(prev => prev ? { ...prev, comment_count: (prev.comment_count || 0) + 1 } : prev);
+            // Intentionally left empty: the 'post_commented' socket broadcast
+            // (already listened for above) increments comment_count for
+            // every viewer, including whoever just commented -- doing it
+            // here TOO would double-increment it for that person specifically.
+          }}
+          onCommentDeleted={() => {
+            // Same reasoning -- 'comment_deleted' is handled by the socket
+            // listener for every viewer, including the deleter.
           }}
         />
       )}

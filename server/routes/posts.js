@@ -340,6 +340,27 @@ router.post('/:id/comment', rateLimiter(config.RATE_LIMIT.POST), async (req, res
   }
 });
 
+// Only the comment's own author can delete it -- enforced server-side in
+// PostRepo.deleteComment (mirrors PostRepo.deletePost's forbidden check),
+// never trusted from the client.
+router.delete('/:postId/comment/:commentId', async (req, res) => {
+  try {
+    const commentId = parseInt(req.params.commentId, 10);
+    const result = await PostRepo.deleteComment(commentId, req.user.id);
+    if (!result) return res.status(404).json({ error: 'COMMENT_NOT_FOUND' });
+    if (result.forbidden) return res.status(403).json({ error: 'FORBIDDEN', message: 'You can only delete your own comments.' });
+
+    const io = req.app.get('io');
+    if (io) {
+      io.emit('comment_deleted', { post_id: result.post_id, comment_id: commentId, parent_comment_id: result.parent_comment_id });
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    sendServerError(res, err);
+  }
+});
+
 router.post('/:id/react', async (req, res) => {
   try {
     const { reaction } = req.body;

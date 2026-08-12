@@ -1,15 +1,18 @@
 import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import api from '../services/api';
+import { useAuth } from '../context/AuthContext';
 import PremiumBadge from './PremiumBadge';
 
-export default function CommentModal({ postId, onClose, onCommentAdded }) {
+export default function CommentModal({ postId, onClose, onCommentAdded, onCommentDeleted }) {
+  const { user } = useAuth();
   const [comments, setComments] = useState([]);
   const [newComment, setNewComment] = useState('');
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [visible, setVisible] = useState(false);
   const [replyingTo, setReplyingTo] = useState(null); // the comment being replied to (for the "Replying to @x" indicator)
+  const [deletingId, setDeletingId] = useState(null);
   const inputRef = useRef(null);
   const scrollYRef = useRef(0);
 
@@ -65,6 +68,28 @@ export default function CommentModal({ postId, onClose, onCommentAdded }) {
   const handleReply = (comment) => {
     setReplyingTo(comment);
     inputRef.current?.focus();
+  };
+
+  // Server re-checks ownership itself (PostRepo.deleteComment) -- this
+  // confirm + the `c.user_id === user?.id` check on the button below are
+  // just so the option is only ever offered for your own comments, not the
+  // actual security boundary.
+  const handleDeleteComment = async (comment) => {
+    if (!window.confirm('Delete this comment?')) return;
+    setDeletingId(comment.id);
+    try {
+      await api.delete(`/posts/${postId}/comment/${comment.id}`);
+      // A deleted top-level comment takes its replies with it server-side
+      // (see PostRepo.deleteComment) -- drop them here too so the list
+      // doesn't show orphaned replies under a comment that's gone.
+      setComments(prev => prev.filter(c => c.id !== comment.id && c.parent_comment_id !== comment.id));
+      if (replyingTo?.id === comment.id) setReplyingTo(null);
+      if (onCommentDeleted) onCommentDeleted(postId);
+    } catch (err) {
+      console.error('Failed to delete comment:', err);
+    } finally {
+      setDeletingId(null);
+    }
   };
 
   // Group the flat comment list into top-level comments + their replies
@@ -209,13 +234,25 @@ export default function CommentModal({ postId, onClose, onCommentAdded }) {
                         </div>
                         <p style={{ fontSize: '13px', color: '#52525b', lineHeight: 1.5, margin: 0 }}>{c.content}</p>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => handleReply(c)}
-                        style={{ background: 'none', border: 'none', padding: '4px 4px 0 4px', marginTop: '2px', fontSize: '11px', fontWeight: 700, color: '#a1a1aa', cursor: 'pointer' }}
-                      >
-                        Reply
-                      </button>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <button
+                          type="button"
+                          onClick={() => handleReply(c)}
+                          style={{ background: 'none', border: 'none', padding: '4px 4px 0 4px', marginTop: '2px', fontSize: '11px', fontWeight: 700, color: '#a1a1aa', cursor: 'pointer' }}
+                        >
+                          Reply
+                        </button>
+                        {c.user_id === user?.id && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteComment(c)}
+                            disabled={deletingId === c.id}
+                            style={{ background: 'none', border: 'none', padding: '4px 4px 0 4px', marginTop: '2px', fontSize: '11px', fontWeight: 700, color: '#e11d48', cursor: 'pointer', opacity: deletingId === c.id ? 0.5 : 1 }}
+                          >
+                            {deletingId === c.id ? 'Deleting...' : 'Delete'}
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
 
@@ -238,13 +275,25 @@ export default function CommentModal({ postId, onClose, onCommentAdded }) {
                           </div>
                           <p style={{ fontSize: '12px', color: '#71717a', lineHeight: 1.5, margin: 0 }}>{r.content}</p>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => handleReply(r)}
-                          style={{ background: 'none', border: 'none', padding: '4px 4px 0 4px', marginTop: '2px', fontSize: '10px', fontWeight: 700, color: '#a1a1aa', cursor: 'pointer' }}
-                        >
-                          Reply
-                        </button>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <button
+                            type="button"
+                            onClick={() => handleReply(r)}
+                            style={{ background: 'none', border: 'none', padding: '4px 4px 0 4px', marginTop: '2px', fontSize: '10px', fontWeight: 700, color: '#a1a1aa', cursor: 'pointer' }}
+                          >
+                            Reply
+                          </button>
+                          {r.user_id === user?.id && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteComment(r)}
+                              disabled={deletingId === r.id}
+                              style={{ background: 'none', border: 'none', padding: '4px 4px 0 4px', marginTop: '2px', fontSize: '10px', fontWeight: 700, color: '#e11d48', cursor: 'pointer', opacity: deletingId === r.id ? 0.5 : 1 }}
+                            >
+                              {deletingId === r.id ? 'Deleting...' : 'Delete'}
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
                   ))}

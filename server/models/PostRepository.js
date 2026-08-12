@@ -113,14 +113,28 @@ class PostRepository extends BaseRepository {
     `, [petId, limit, offset]);
   }
 
+  // Single atomic statement instead of a SELECT-then-INSERT/DELETE: two
+  // near-simultaneous toggles for the same (post, user) -- e.g. a
+  // double-tap gesture racing a button click, a flaky network retry, the
+  // same account open in two tabs -- used to be able to interleave (both
+  // read "not liked", both branch the same way) and leave the row in the
+  // wrong final state. Deleting first and only inserting when nothing was
+  // deleted keeps the whole toggle inside one statement, so Postgres
+  // serializes concurrent callers on the same row via the unique index
+  // instead of leaving a gap between the check and the write.
   async toggleLike(postId, userId) {
-    const existing = await db.get('SELECT id FROM likes WHERE post_id = ? AND user_id = ?', [postId, userId]);
-    if (existing) {
-      await db.run('DELETE FROM likes WHERE post_id = ? AND user_id = ?', [postId, userId]);
-      return { liked: false };
-    }
-    await db.run('INSERT INTO likes (post_id, user_id) VALUES (?, ?)', [postId, userId]);
-    return { liked: true };
+    const row = await db.get(
+      `WITH deleted AS (
+         DELETE FROM likes WHERE post_id = ? AND user_id = ? RETURNING 1
+       ), inserted AS (
+         INSERT INTO likes (post_id, user_id)
+         SELECT ?, ? WHERE NOT EXISTS (SELECT 1 FROM deleted)
+         RETURNING 1
+       )
+       SELECT EXISTS(SELECT 1 FROM inserted) AS liked`,
+      [postId, userId, postId, userId]
+    );
+    return { liked: !!row.liked };
   }
 
   async getLikeCount(postId) {
@@ -258,6 +272,21 @@ class PostRepository extends BaseRepository {
     await db.run('DELETE FROM posts WHERE id = ?', [postId]);
 
     return { success: true, pet_id: post.pet_id };
+  }
+
+  async deleteComment(commentId, userId) {
+    const comment = await db.get('SELECT * FROM comments WHERE id = ?', [commentId]);
+    if (!comment) return null;
+    if (comment.user_id !== userId) return { forbidden: true };
+
+    // No FK cascade exists on parent_comment_id (see migrations.js) -- a
+    // deleted top-level comment must take its own replies with it, or
+    // they'd linger in the table pointing at a parent that no longer
+    // exists (invisible to the client, but permanently orphaned in the DB).
+    await db.run('DELETE FROM comments WHERE parent_comment_id = ?', [commentId]);
+    await db.run('DELETE FROM comments WHERE id = ?', [commentId]);
+
+    return { success: true, post_id: comment.post_id, parent_comment_id: comment.parent_comment_id };
   }
 }
 

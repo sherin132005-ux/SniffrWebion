@@ -5,6 +5,7 @@ import api from '../services/api';
 import CommentModal from './CommentModal';
 import ShareSheetModal from './ShareSheetModal';
 import ReportPostModal from './ReportPostModal';
+import PostVideo from './PostVideo';
 
 const PawLikeIcon = ({ active, className = '' }) => (
   <img
@@ -100,6 +101,7 @@ export default function GalleryViewerModal({ posts = [], initialIndex = 0, petNa
     try {
       const d = await api.post(`/posts/${postId}/like`);
       if (likeSeqRef.current[postId] !== seq) return; // superseded by a newer tap
+      likeSeqRef.current[postId] = 0; // settled -- future updates for this post can apply again
       setLocalPosts(prev => prev.map(p => {
         if (p.id === postId) {
           if (onPostLiked) onPostLiked(postId, d.liked, d.likeCount);
@@ -107,7 +109,10 @@ export default function GalleryViewerModal({ posts = [], initialIndex = 0, petNa
         }
         return p;
       }));
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      if (likeSeqRef.current[postId] === seq) likeSeqRef.current[postId] = 0;
+      console.error(e);
+    }
   };
 
   const copyPostLink = (postId) => {
@@ -262,7 +267,7 @@ export default function GalleryViewerModal({ posts = [], initialIndex = 0, petNa
             {post.media_url && (
               <div className="relative bg-black/5 flex items-center justify-center" style={{ maxHeight: 'min(480px, 70vh)' }}>
                 {post.media_type === 'video' ? (
-                  <video src={post.media_url} controls className="w-full max-h-full object-contain" style={{ maxHeight: 'min(480px, 70vh)' }} />
+                  <PostVideo src={post.media_url} />
                 ) : (
                   <img src={post.media_url} alt={post.caption || 'Memory'} className="w-full max-h-full object-contain" style={{ maxHeight: 'min(480px, 70vh)' }} />
                 )}
@@ -325,6 +330,9 @@ export default function GalleryViewerModal({ posts = [], initialIndex = 0, petNa
           onClose={() => setCommentPostId(null)}
           onCommentAdded={(pid) => {
             setLocalPosts(prev => prev.map(p => p.id === pid ? { ...p, comment_count: (p.comment_count || 0) + 1 } : p));
+          }}
+          onCommentDeleted={(pid) => {
+            setLocalPosts(prev => prev.map(p => p.id === pid ? { ...p, comment_count: Math.max(0, (p.comment_count || 0) - 1) } : p));
           }}
         />
       )}

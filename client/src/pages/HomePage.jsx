@@ -10,6 +10,7 @@ import ShareSheetModal from '../components/ShareSheetModal';
 import ReportPostModal from '../components/ReportPostModal';
 import NotificationsPanel from '../components/NotificationsPanel';
 import PremiumBadge from '../components/PremiumBadge';
+import PostVideo from '../components/PostVideo';
 
 // ── Custom SVG Icon Components (sized by viewBox for visual-weight matching) ──
 const PawLikeIcon = ({ active, className = '' }) => (
@@ -416,6 +417,10 @@ export default function HomePage() {
       setPosts(prev => prev.map(p => p.id === post_id ? { ...p, comment_count: Number(p.comment_count || 0) + 1 } : p));
     };
 
+    const handleCommentDeleted = ({ post_id }) => {
+      setPosts(prev => prev.map(p => p.id === post_id ? { ...p, comment_count: Math.max(0, Number(p.comment_count || 0) - 1) } : p));
+    };
+
     const handlePostShared = ({ post_id, share_count }) => {
       setPosts(prev => prev.map(p => p.id === post_id ? { ...p, share_count } : p));
     };
@@ -460,6 +465,7 @@ export default function HomePage() {
     socket.on('new_post', handleNewPost);
     socket.on('post_liked', handlePostLiked);
     socket.on('post_commented', handlePostCommented);
+    socket.on('comment_deleted', handleCommentDeleted);
     socket.on('post_shared', handlePostShared);
     socket.on('post_reacted', handlePostReacted);
     socket.on('post_updated', handlePostUpdated);
@@ -470,6 +476,7 @@ export default function HomePage() {
       socket.off('new_post', handleNewPost);
       socket.off('post_liked', handlePostLiked);
       socket.off('post_commented', handlePostCommented);
+      socket.off('comment_deleted', handleCommentDeleted);
       socket.off('post_shared', handlePostShared);
       socket.off('post_reacted', handlePostReacted);
       socket.off('post_updated', handlePostUpdated);
@@ -1325,7 +1332,7 @@ export default function HomePage() {
                     {post.media_url && (
                       <div className="relative overflow-hidden bg-black/5 flex items-center justify-center select-none" style={{ maxHeight: 'min(480px, 70vh)' }}>
                         {post.media_type === 'video' ? (
-                          <video src={post.media_url} controls className="w-full max-h-full object-contain" style={{ maxHeight: 'min(480px, 70vh)' }} />
+                          <PostVideo src={post.media_url} />
                         ) : (
                           <img src={post.media_url} alt={post.caption} className="w-full max-h-full object-contain group-hover:scale-105 transition-transform duration-700" style={{ maxHeight: 'min(480px, 70vh)' }} draggable={false} />
                         )}
@@ -1434,6 +1441,11 @@ export default function HomePage() {
             // (already listened for above) increments comment_count for
             // everyone, including the person who just commented. Doing it
             // here TOO caused a double-increment for the commenter specifically.
+          }}
+          onCommentDeleted={() => {
+            // Same reasoning as onCommentAdded above -- 'comment_deleted' is
+            // handled by the socket listener for every viewer, including
+            // whoever just deleted their own comment.
           }}
         />
       )}

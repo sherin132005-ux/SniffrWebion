@@ -15,6 +15,7 @@ import useTypingSignal from '../hooks/useTypingSignal';
 import useMessageInteractions from '../hooks/useMessageInteractions';
 import TypingDots from '../components/chat/TypingDots';
 import { REACTION_EMOJIS, REACTION_LABELS } from '../constants/reactions';
+import PostVideo from '../components/PostVideo';
 
 function formatPresence(isOnline, lastActiveAt) {
   if (isOnline) return 'Active now';
@@ -109,7 +110,7 @@ function SharedPostCard({ postId, onOpenViewer }) {
       {post.media_url && (
         <div className="w-full h-32 relative bg-zinc-100 dark:bg-zinc-800 overflow-hidden">
           {post.media_type === 'video' ? (
-            <video src={post.media_url} className="w-full h-full object-cover" />
+            <PostVideo src={post.media_url} controls={false} fill />
           ) : (
             <img src={post.media_url} alt="Thumbnail" className="w-full h-full object-cover" />
           )}
