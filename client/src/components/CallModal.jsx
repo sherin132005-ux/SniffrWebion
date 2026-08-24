@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useSocket } from '../context/SocketContext';
+import api from '../services/api';
 
 export default function CallModal({
   type = 'audio',
@@ -204,11 +205,28 @@ export default function CallModal({
     }
   };
 
+  // TURN credentials must never ship in the client bundle -- fetched fresh
+  // from the server (which reads them from env vars) each time a peer
+  // connection is set up. Falls back to STUN-only if the endpoint fails or
+  // no TURN is configured server-side, so calls still work exactly as
+  // before on networks where STUN alone is enough.
+  const fetchIceServers = async () => {
+    try {
+      const res = await api.get('/calls/ice-servers');
+      if (res?.iceServers?.length) {
+        console.log('[Call] ICE servers loaded:', res.iceServers.map(s => Array.isArray(s.urls) ? s.urls : [s.urls]).flat());
+        return res.iceServers;
+      }
+    } catch (err) {
+      console.error('[Call] Failed to fetch ICE servers, falling back to STUN-only:', err);
+    }
+    return [{ urls: 'stun:stun.l.google.com:19302' }];
+  };
+
   // Setup WebRTC PeerConnection
   const setupPeerConnection = async () => {
-    const pc = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-    });
+    const iceServers = await fetchIceServers();
+    const pc = new RTCPeerConnection({ iceServers });
 
     const stream = localStreamRef.current || (await acquireLocalMedia());
     if (stream) {
@@ -216,6 +234,8 @@ export default function CallModal({
         pc.addTrack(track, stream);
         console.log('[Call] Local track added:', track.kind);
       });
+    } else {
+      console.error('[Call] No local media stream available -- getUserMedia failed or was denied. No tracks will be sent.');
     }
 
     pc.onicecandidate = (event) => {
@@ -234,12 +254,17 @@ export default function CallModal({
     // element instead.
     pc.ontrack = (event) => {
       const remoteStream = event.streams[0];
-      console.log('[Call] Remote track received:', event.track.kind);
+      console.log('[Call] Remote track received:', event.track.kind, event.track.readyState);
       if (!remoteStream) return;
-      if (type === 'video' && remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = remoteStream;
-      } else if (remoteAudioRef.current) {
-        remoteAudioRef.current.srcObject = remoteStream;
+      const targetEl = type === 'video' && remoteVideoRef.current ? remoteVideoRef.current : remoteAudioRef.current;
+      if (targetEl) {
+        targetEl.srcObject = remoteStream;
+        // autoPlay is already set on both elements, but some browsers
+        // (autoplay-policy-restricted, or a stream attached after the
+        // element already rendered) need an explicit play() call -- if
+        // this rejects, that's diagnostic gold: media IS arriving, it's
+        // just not being allowed to play.
+        targetEl.play?.().catch(err => console.error('[Call] Remote media element failed to play (possible autoplay block):', err));
       }
     };
 
@@ -278,6 +303,21 @@ export default function CallModal({
           reconnectTimeoutRef.current = null;
         }
         setReconnecting(false);
+      }
+    };
+
+    // Separate from iceConnectionState above: this reflects the OVERALL
+    // peer connection (ICE + DTLS + certificate checks combined), and is
+    // the most reliable single signal for "is media actually flowing".
+    // Once it reaches 'connected', log which tracks each side actually
+    // negotiated -- if a sender/receiver shows "no track", that's the
+    // exact point where audio/video is silently missing despite a fully
+    // connected transport.
+    pc.onconnectionstatechange = () => {
+      console.log('[Call] Peer connection state changed:', pc.connectionState);
+      if (pc.connectionState === 'connected') {
+        console.log('[Call] Senders:', pc.getSenders().map(s => s.track ? `${s.track.kind}(${s.track.readyState})` : 'no track'));
+        console.log('[Call] Receivers:', pc.getReceivers().map(r => r.track ? `${r.track.kind}(${r.track.readyState})` : 'no track'));
       }
     };
 

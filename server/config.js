@@ -81,4 +81,18 @@ export default {
   CLOUDINARY_CLOUD_NAME:   process.env.CLOUDINARY_CLOUD_NAME   || '',
   CLOUDINARY_API_KEY:      process.env.CLOUDINARY_API_KEY      || '',
   CLOUDINARY_API_SECRET:   process.env.CLOUDINARY_API_SECRET   || '',
+
+  // ── WebRTC TURN relay (1:1 calls) ─────────────────────────────
+  // STUN alone (see server/routes/calls.js) can't traverse symmetric NAT,
+  // which most mobile carrier networks use -- two peers on such networks
+  // complete signaling fine but never get a media path. TURN is optional:
+  // if unset, calls still work exactly as before (STUN-only) on networks
+  // where that's enough. Comma-separated so a provider's multiple
+  // urls/transports (udp/tcp/tls) can all be offered, same convention as
+  // CORS_ORIGINS above. Never sent to the client at build time -- only
+  // handed out per-request by the authenticated /api/calls/ice-servers
+  // endpoint, so these never end up readable in the shipped JS bundle.
+  TURN_URLS:        (process.env.TURN_URLS || '').split(',').map(u => u.trim()).filter(Boolean),
+  TURN_USERNAME:    process.env.TURN_USERNAME    || '',
+  TURN_CREDENTIAL:  process.env.TURN_CREDENTIAL  || '',
 };

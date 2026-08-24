@@ -27,6 +27,7 @@ import notificationRoutes from './routes/notifications.js';
 import premiumRoutes from './routes/premium.js';
 import ratingRoutes from './routes/ratings.js';
 import adminRoutes from './routes/admin.js';
+import callRoutes from './routes/calls.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -83,6 +84,7 @@ async function start() {
   app.use('/api/premium', premiumRoutes);
   app.use('/api/ratings', ratingRoutes);
   app.use('/api/admin', adminRoutes);
+  app.use('/api/calls', callRoutes);
 
   // Root route
   app.get('/', (req, res) => {
