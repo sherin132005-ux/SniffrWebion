@@ -138,6 +138,13 @@ export function setupCallSocket(io) {
       io.to(`user_${to}`).emit('webrtc_ice_candidate', { from: userId, candidate });
     });
 
+    // Pure relay, same shape as the ICE-candidate one above -- lets the
+    // remote party's UI show "X is muted" instead of just going silent
+    // with no indication of why.
+    socket.on('call_mute_state', ({ to, muted }) => {
+      io.to(`user_${to}`).emit('call_mute_state', { from: userId, muted });
+    });
+
     socket.on('disconnect', async () => {
       for (const [callId, call] of activeCalls) {
         if (call.from === userId || call.to === userId) {

@@ -5,14 +5,25 @@ import CallModal from '../components/CallModal';
 const CallContext = createContext({ startCall: () => {} });
 
 export function CallProvider({ children }) {
-  const { getSocket } = useSocket();
+  const { socket } = useSocket();
   const [activeCall, setActiveCall] = useState(null);
 
+  // IMPORTANT: depend on the reactive `socket` state, not `getSocket`
+  // (a function reference that never changes identity). An effect keyed
+  // on a never-changing dependency only ever runs once, at mount -- if
+  // this provider (which wraps the whole app) happens to mount before
+  // SocketProvider's own effect has finished calling connectSocket() for
+  // this session, `getSocket()` returns null, the old code bailed via
+  // `if (!socket) return`, and -- because the effect never reran -- the
+  // global incoming-call listener was never attached for the rest of the
+  // session. That was the root cause of calls not reliably ringing.
+  // Depending on `socket` here makes the effect correctly re-run the
+  // moment SocketProvider's setSocket() actually provides a live socket.
   useEffect(() => {
-    const socket = getSocket();
     if (!socket) return;
 
     const onIncomingCall = ({ callId, from, type, callerPet }) => {
+      console.log('[Call] Incoming call received:', { callId, from, type });
       setActiveCall({
         type,
         name: callerPet?.name || 'Playmate',
@@ -27,7 +38,7 @@ export function CallProvider({ children }) {
 
     socket.on('call_incoming', onIncomingCall);
     return () => socket.off('call_incoming', onIncomingCall);
-  }, [getSocket]);
+  }, [socket]);
 
   const startCall = useCallback(({ type, name, username, avatar, petId, toUserId }) => {
     setActiveCall({
