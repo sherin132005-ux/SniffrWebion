@@ -55,6 +55,40 @@ export default function CallModal({
   // by startPeerConnection / the webrtc_offer listener below.
   const hasNegotiatedOnceRef = useRef(false);
 
+  // ── Temporary debug instrumentation (call-audit request) ────────────
+  // Tracks the actual outcome of the remote media element's play() call
+  // -- not just whether we attempted it -- so the debug panel below can
+  // show definitively whether playback ever actually started, instead of
+  // us assuming it did because no error was thrown.
+  const playResultRef = useRef({ status: 'idle', error: null });
+  // Lets the debug panel detect whether the remote audio element's
+  // playback position is actually advancing between snapshots -- if it's
+  // frozen even though play() resolved, decoded audio isn't reaching the
+  // output device, which points at a routing/volume issue rather than a
+  // blocked play() call.
+  const prevAudioTimeRef = useRef(0);
+
+  // Off by default for every normal user. Enable with ?calldebug=1 in the
+  // URL (sticks via localStorage so it survives the in-app navigation a
+  // query param wouldn't) or ?calldebug=0 to turn it back off.
+  const [debugEnabled] = useState(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('calldebug') === '1') {
+        localStorage.setItem('sniffr_call_debug', '1');
+        return true;
+      }
+      if (params.get('calldebug') === '0') {
+        localStorage.removeItem('sniffr_call_debug');
+        return false;
+      }
+      return localStorage.getItem('sniffr_call_debug') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const [debugSnapshot, setDebugSnapshot] = useState(null);
+
   // Initialize call if outgoing
   useEffect(() => {
     if (!socket) return;
@@ -185,6 +219,54 @@ export default function CallModal({
     };
   }, [status]);
 
+  // ── Debug panel polling (temporary) ──────────────────────────────────
+  // Only runs when explicitly enabled, so this has zero effect on normal
+  // users. Polls the live WebRTC/media state directly off the refs -- not
+  // React state -- since track/element internals change without
+  // triggering a re-render on their own.
+  useEffect(() => {
+    if (!debugEnabled || status !== 'connected') return;
+    const interval = setInterval(() => {
+      const pc = pcRef.current;
+      const audioEl = remoteAudioRef.current;
+      const videoEl = remoteVideoRef.current;
+
+      let audioAdvancing = false;
+      if (audioEl) {
+        audioAdvancing = audioEl.currentTime > prevAudioTimeRef.current;
+        prevAudioTimeRef.current = audioEl.currentTime;
+      }
+
+      setDebugSnapshot({
+        connectionState: pc?.connectionState || 'n/a',
+        iceConnectionState: pc?.iceConnectionState || 'n/a',
+        localTracks: (localStreamRef.current?.getTracks() || []).map(t => ({
+          kind: t.kind, enabled: t.enabled, readyState: t.readyState, muted: t.muted
+        })),
+        receivers: (pc?.getReceivers() || []).filter(r => r.track).map(r => ({
+          kind: r.track.kind, enabled: r.track.enabled, readyState: r.track.readyState, muted: r.track.muted
+        })),
+        audioEl: audioEl ? {
+          hasSrcObject: !!audioEl.srcObject,
+          paused: audioEl.paused,
+          muted: audioEl.muted,
+          volume: audioEl.volume,
+          readyState: audioEl.readyState,
+          currentTime: audioEl.currentTime.toFixed(1),
+          advancing: audioAdvancing,
+        } : null,
+        videoEl: (type === 'video' && videoEl) ? {
+          hasSrcObject: !!videoEl.srcObject,
+          paused: videoEl.paused,
+          muted: videoEl.muted,
+          readyState: videoEl.readyState,
+        } : null,
+        playResult: playResultRef.current,
+      });
+    }, 700);
+    return () => clearInterval(interval);
+  }, [debugEnabled, status, type]);
+
   // Acquire local media streams
   const acquireLocalMedia = async () => {
     try {
@@ -254,17 +336,30 @@ export default function CallModal({
     // element instead.
     pc.ontrack = (event) => {
       const remoteStream = event.streams[0];
-      console.log('[Call] Remote track received:', event.track.kind, event.track.readyState);
+      // .muted here reflects whether the RECEIVED track is actually
+      // getting data -- readyState alone only confirms the track object
+      // exists, not that anything is arriving over the wire.
+      console.log('[Call] Remote track received:', event.track.kind, 'readyState:', event.track.readyState, 'muted:', event.track.muted);
       if (!remoteStream) return;
       const targetEl = type === 'video' && remoteVideoRef.current ? remoteVideoRef.current : remoteAudioRef.current;
       if (targetEl) {
         targetEl.srcObject = remoteStream;
-        // autoPlay is already set on both elements, but some browsers
-        // (autoplay-policy-restricted, or a stream attached after the
-        // element already rendered) need an explicit play() call -- if
-        // this rejects, that's diagnostic gold: media IS arriving, it's
-        // just not being allowed to play.
-        targetEl.play?.().catch(err => console.error('[Call] Remote media element failed to play (possible autoplay block):', err));
+        // autoPlay is already set on both elements, but some browsers/
+        // WebViews (autoplay-policy-restricted, or a play() call not
+        // directly inside a user-gesture call stack) need an explicit
+        // play() call -- and previously we only logged the REJECTED case.
+        // Track the RESOLVED outcome too, since "no error was thrown" is
+        // not the same as "playback actually started".
+        playResultRef.current = { status: 'pending', error: null };
+        targetEl.play?.()
+          .then(() => {
+            console.log('[Call] Remote media playback started (play() resolved)');
+            playResultRef.current = { status: 'playing', error: null };
+          })
+          .catch(err => {
+            console.error('[Call] Remote media element failed to play (possible autoplay/gesture block):', err);
+            playResultRef.current = { status: 'blocked', error: err?.name ? `${err.name}: ${err.message}` : String(err) };
+          });
       }
     };
 
@@ -316,8 +411,11 @@ export default function CallModal({
     pc.onconnectionstatechange = () => {
       console.log('[Call] Peer connection state changed:', pc.connectionState);
       if (pc.connectionState === 'connected') {
-        console.log('[Call] Senders:', pc.getSenders().map(s => s.track ? `${s.track.kind}(${s.track.readyState})` : 'no track'));
-        console.log('[Call] Receivers:', pc.getReceivers().map(r => r.track ? `${r.track.kind}(${r.track.readyState})` : 'no track'));
+        // readyState alone only confirms a track object exists, not that
+        // data is actually arriving -- .muted on a RECEIVER track means
+        // "no data flowing right now" even while readyState stays 'live'.
+        console.log('[Call] Senders:', pc.getSenders().map(s => s.track ? `${s.track.kind}(${s.track.readyState}, muted:${s.track.muted})` : 'no track'));
+        console.log('[Call] Receivers:', pc.getReceivers().map(r => r.track ? `${r.track.kind}(${r.track.readyState}, muted:${r.track.muted})` : 'no track'));
       }
     };
 
@@ -480,6 +578,27 @@ export default function CallModal({
     }
   };
 
+  // Debug-panel-only: a direct tap satisfies any browser/WebView "requires
+  // user gesture" autoplay policy, unlike the automatic play() call in
+  // pc.ontrack, which fires from an async WebRTC event with no gesture
+  // attached to it. If this button makes audio/video start where the
+  // automatic attempt didn't, that CONFIRMS a gesture-policy block as the
+  // cause -- it is a diagnostic probe, not a proposed permanent fix.
+  const retryPlay = () => {
+    const el = type === 'video' ? remoteVideoRef.current : remoteAudioRef.current;
+    if (!el) return;
+    playResultRef.current = { status: 'pending', error: null };
+    el.play()
+      .then(() => {
+        console.log('[Call][Debug] Manual retry play() succeeded');
+        playResultRef.current = { status: 'playing', error: null };
+      })
+      .catch(err => {
+        console.error('[Call][Debug] Manual retry play() failed:', err);
+        playResultRef.current = { status: 'blocked', error: err?.name ? `${err.name}: ${err.message}` : String(err) };
+      });
+  };
+
   const formatTime = (s) =>
     `${Math.floor(s / 60).toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`;
 
@@ -498,6 +617,50 @@ export default function CallModal({
           elements with display:none, even with autoplay/playsinline set,
           since the element is treated as fully removed from rendering. */}
       <audio ref={remoteAudioRef} autoPlay playsInline className="sr-only pointer-events-none" />
+
+      {/* Temporary debug panel -- enable with ?calldebug=1 (see debugEnabled
+          above). Not part of normal UI, safe to strip out once the call
+          feature is confirmed working. */}
+      {debugEnabled && debugSnapshot && (
+        <div className="fixed top-2 left-2 right-2 z-[600] max-h-[45vh] overflow-y-auto bg-black/90 text-emerald-300 text-[10px] font-mono p-3 rounded-lg border border-emerald-500/30 leading-snug space-y-0.5">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-white font-bold">🐛 Call Debug</span>
+            <button
+              onClick={retryPlay}
+              className="bg-emerald-600 text-white text-[10px] font-bold px-2 py-1 rounded"
+            >
+              Retry Play
+            </button>
+          </div>
+          <div>PC: {debugSnapshot.connectionState} / ICE: {debugSnapshot.iceConnectionState}</div>
+          <div>
+            play(): {debugSnapshot.playResult.status}
+            {debugSnapshot.playResult.error ? ` — ${debugSnapshot.playResult.error}` : ''}
+          </div>
+          <div>
+            Local: {debugSnapshot.localTracks.length
+              ? debugSnapshot.localTracks.map(t => `${t.kind}[en:${t.enabled ? 1 : 0} ${t.readyState}]`).join('  ')
+              : 'none'}
+          </div>
+          <div>
+            Remote: {debugSnapshot.receivers.length
+              ? debugSnapshot.receivers.map(t => `${t.kind}[en:${t.enabled ? 1 : 0} ${t.readyState} muted:${t.muted ? 1 : 0}]`).join('  ')
+              : 'none'}
+          </div>
+          {debugSnapshot.audioEl && (
+            <div>
+              Audio el: src:{debugSnapshot.audioEl.hasSrcObject ? 1 : 0} paused:{debugSnapshot.audioEl.paused ? 1 : 0}{' '}
+              muted:{debugSnapshot.audioEl.muted ? 1 : 0} vol:{debugSnapshot.audioEl.volume} t:{debugSnapshot.audioEl.currentTime}s{' '}
+              advancing:{debugSnapshot.audioEl.advancing ? 1 : 0}
+            </div>
+          )}
+          {debugSnapshot.videoEl && (
+            <div>
+              Video el: src:{debugSnapshot.videoEl.hasSrcObject ? 1 : 0} paused:{debugSnapshot.videoEl.paused ? 1 : 0} muted:{debugSnapshot.videoEl.muted ? 1 : 0}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── VIDEO CALL LAYOUT ──────────────────────────────────────── */}
       {type === 'video' ? (
