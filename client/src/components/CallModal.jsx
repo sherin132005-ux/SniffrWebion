@@ -492,8 +492,12 @@ export default function CallModal({
       {/* Always mounted so audio-only calls (which render no <video> at
           all below) have somewhere to actually play the remote stream --
           see pc.ontrack. Hidden regardless of call type since video calls
-          play remote audio through the visible <video> element instead. */}
-      <audio ref={remoteAudioRef} autoPlay playsInline className="hidden" />
+          play remote audio through the visible <video> element instead.
+          Uses sr-only (clip/1px, not display:none) deliberately -- some
+          mobile browsers deprioritize or suspend playback on media
+          elements with display:none, even with autoplay/playsinline set,
+          since the element is treated as fully removed from rendering. */}
+      <audio ref={remoteAudioRef} autoPlay playsInline className="sr-only pointer-events-none" />
 
       {/* ── VIDEO CALL LAYOUT ──────────────────────────────────────── */}
       {type === 'video' ? (
