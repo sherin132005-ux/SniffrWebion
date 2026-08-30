@@ -11,6 +11,7 @@ import ReportPostModal from '../components/ReportPostModal';
 import NotificationsPanel from '../components/NotificationsPanel';
 import PremiumBadge from '../components/PremiumBadge';
 import PostVideo from '../components/PostVideo';
+import { avatarUrl, feedMediaUrl } from '../utils/media';
 
 // ── Custom SVG Icon Components (sized by viewBox for visual-weight matching) ──
 const PawLikeIcon = ({ active, className = '' }) => (
@@ -1004,7 +1005,7 @@ export default function HomePage() {
       >
         <div className="flex items-center gap-3">
           <div className="relative">
-            <img src={p.avatar_url || p.partner_avatar || '/logo.png'} alt={p.name || p.partner_name} className="w-10 h-10 rounded-full object-cover border border-zinc-100" />
+            <img src={avatarUrl(p.avatar_url || p.partner_avatar) || '/logo.png'} alt={p.name || p.partner_name} loading="lazy" decoding="async" className="w-10 h-10 rounded-full object-cover border border-zinc-100" />
             {isOnline && (
               <div className="absolute -bottom-0.5 -right-0.5 bg-emerald-500 rounded-full w-3 h-3 border-2 border-white" />
             )}
@@ -1225,7 +1226,7 @@ export default function HomePage() {
                     <div className="flex items-center justify-between gap-2 p-4 sm:p-5 select-none">
                       <div className="flex items-center gap-3 min-w-0">
                         <div className="relative flex-shrink-0">
-                          <img src={post.pet_avatar || '/logo.png'} alt={post.pet_name} className="w-12 h-12 rounded-full object-cover border-2 border-primary/20" draggable={false} />
+                          <img src={avatarUrl(post.pet_avatar) || '/logo.png'} alt={post.pet_name} loading="lazy" decoding="async" className="w-12 h-12 rounded-full object-cover border-2 border-primary/20" draggable={false} />
                           <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-emerald-400 rounded-full border-2 border-white" />
                         </div>
                         <div className="min-w-0">
@@ -1334,7 +1335,7 @@ export default function HomePage() {
                         {post.media_type === 'video' ? (
                           <PostVideo src={post.media_url} />
                         ) : (
-                          <img src={post.media_url} alt={post.caption} className="w-full max-h-full object-contain group-hover:scale-105 transition-transform duration-700" style={{ maxHeight: 'min(480px, 70vh)' }} draggable={false} />
+                          <img src={feedMediaUrl(post.media_url)} alt={post.caption} loading={idx < 2 ? 'eager' : 'lazy'} decoding="async" className="w-full max-h-full object-contain group-hover:scale-105 transition-transform duration-700" style={{ maxHeight: 'min(480px, 70vh)' }} draggable={false} />
                         )}
 
                         {/* Double-tap paw animation overlay with sparkles */}

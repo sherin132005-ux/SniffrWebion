@@ -7,6 +7,7 @@ import usePullToRefresh from '../hooks/usePullToRefresh';
 import { useAuth } from '../context/AuthContext';
 import PremiumBadge from '../components/PremiumBadge';
 import Portal from '../components/Portal';
+import { avatarUrl, thumbnailUrl } from '../utils/media';
 
 const areas = ['locality', 'city', 'country', 'region'];
 const areaLabels = { locality: 'Locality', city: 'City', country: 'Country', region: 'Region' };
@@ -384,7 +385,7 @@ const [myPetId, setMyPetId] = useState(null);
                             <span className="material-symbols-outlined text-zinc-400 text-xl" style={{ fontVariationSettings: "'FILL' 1" }}>workspace_premium</span>
                           </div>
                           <div className="w-24 h-32 rounded-[2rem] overflow-hidden bg-white shadow-xl rotate-[-3deg] border-4 border-zinc-50 relative z-10 hover-lift">
-                            <img className="w-full h-full object-cover" src={data.top3[1].avatar_url || '/logo.png'} alt={data.top3[1].name} />
+                            <img className="w-full h-full object-cover" src={thumbnailUrl(data.top3[1].avatar_url) || '/logo.png'} alt={data.top3[1].name} loading="eager" decoding="async" />
                           </div>
                           {data.top3[1].id === myPetId && (
                             <span className="absolute bottom-2 right-2 z-30 bg-primary text-white text-[8px] font-black uppercase px-2 py-0.5 rounded-full shadow-sm">YOU</span>
@@ -411,7 +412,7 @@ const [myPetId, setMyPetId] = useState(null);
                             <ChampionCrown className="w-9 h-9" />
                           </div>
                           <div className="w-32 h-44 rounded-[3rem] overflow-hidden bg-white shadow-[0_20px_50px_-10px_rgba(244,167,185,0.4)] border-4 border-primary relative z-10 hover-lift-lg animate-pulse-glow">
-                            <img className="w-full h-full object-cover" src={data.top3[0].avatar_url || '/logo.png'} alt={data.top3[0].name} />
+                            <img className="w-full h-full object-cover" src={thumbnailUrl(data.top3[0].avatar_url) || '/logo.png'} alt={data.top3[0].name} loading="eager" decoding="async" />
                           </div>
                           {data.top3[0].id === myPetId && (
                             <span className="absolute bottom-2 right-2 z-30 bg-primary text-white text-[8px] font-black uppercase px-2 py-0.5 rounded-full shadow-sm">YOU</span>
@@ -441,7 +442,7 @@ const [myPetId, setMyPetId] = useState(null);
                             <span className="material-symbols-outlined text-amber-600/60 text-xl" style={{ fontVariationSettings: "'FILL' 1" }}>workspace_premium</span>
                           </div>
                           <div className="w-24 h-32 rounded-[2rem] overflow-hidden bg-white shadow-xl rotate-[3deg] border-4 border-zinc-50 relative z-10 hover-lift">
-                            <img className="w-full h-full object-cover" src={data.top3[2].avatar_url || '/logo.png'} alt={data.top3[2].name} />
+                            <img className="w-full h-full object-cover" src={thumbnailUrl(data.top3[2].avatar_url) || '/logo.png'} alt={data.top3[2].name} loading="eager" decoding="async" />
                           </div>
                           {data.top3[2].id === myPetId && (
                             <span className="absolute bottom-2 right-2 z-30 bg-primary text-white text-[8px] font-black uppercase px-2 py-0.5 rounded-full shadow-sm">YOU</span>
@@ -505,7 +506,7 @@ const [myPetId, setMyPetId] = useState(null);
 
                         {/* Profile Pic */}
                         <div className="relative">
-                          <img className="w-12 h-12 rounded-[1.3rem] object-cover shadow-sm" src={pet.avatar_url || '/logo.png'} alt={pet.name} />
+                          <img className="w-12 h-12 rounded-[1.3rem] object-cover shadow-sm" src={avatarUrl(pet.avatar_url) || '/logo.png'} alt={pet.name} loading="lazy" decoding="async" />
                           {isSelf && (
                             <span className="absolute -top-1 -right-1 bg-primary text-white text-[7px] font-black uppercase px-1 rounded-full border border-white">YOU</span>
                           )}
@@ -564,7 +565,7 @@ const [myPetId, setMyPetId] = useState(null);
             
             {/* Enlarged Champion Card */}
             <div className="w-56 h-72 rounded-[3.5rem] overflow-hidden bg-white shadow-[0_25px_60px_-10px_rgba(234,179,8,0.5)] border-4 border-yellow-400 transform scale-105 transition-transform duration-700">
-              <img className="w-full h-full object-cover" src={hallOfFamePet.avatar_url || '/logo.png'} alt={hallOfFamePet.name} />
+              <img className="w-full h-full object-cover" src={thumbnailUrl(hallOfFamePet.avatar_url) || '/logo.png'} alt={hallOfFamePet.name} loading="lazy" decoding="async" />
             </div>
 
             {/* Fading details titles */}
@@ -627,7 +628,7 @@ const [myPetId, setMyPetId] = useState(null);
                       className="flex items-center justify-between py-3 hover:bg-zinc-50 rounded-xl px-2 cursor-pointer transition-colors"
                     >
                       <div className="flex items-center gap-3">
-                        <img className="w-10 h-10 rounded-full object-cover border border-zinc-100" src={item.avatar_url || '/logo.png'} alt={item.name} />
+                        <img className="w-10 h-10 rounded-full object-cover border border-zinc-100" src={avatarUrl(item.avatar_url) || '/logo.png'} alt={item.name} loading="lazy" decoding="async" />
                         <div>
                           <h5 className="font-bold text-xs text-on-surface">{item.name}</h5>
                           <p className="text-[10px] text-zinc-400 font-medium mt-0.5">{item.pet_username || `@${item.name.toLowerCase()}`}</p>

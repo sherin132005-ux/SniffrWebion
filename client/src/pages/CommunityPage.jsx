@@ -13,6 +13,7 @@ import TypingDots from '../components/chat/TypingDots';
 import { REACTION_EMOJIS, REACTION_LABELS } from '../constants/reactions';
 import { PawClipDefs, PAW_CLIP_STYLE } from '../components/PawShape';
 import MemberSniffCard from '../components/MemberSniffCard';
+import { avatarUrl, thumbnailUrl } from '../utils/media';
 
 // ─── Custom Voice Playback Component with Paw timeline ──────────
 function VoicePlayer({ audioUrl }) {
@@ -932,7 +933,7 @@ export default function CommunityPage() {
                   return (
                     <div key={msg.id || i} ref={el => { messageRefsMap.current[msg.id] = el; }} className={`flex gap-2 items-start ${isOwn ? 'justify-end ml-auto max-w-[80%]' : 'max-w-[80%]'} ${highlightMsgId === msg.id ? 'bg-primary/5 rounded-2xl' : ''}`}>
                       {!isOwn && (
-                        <img className="w-8 h-8 rounded-full object-cover shadow-sm mt-1" src={msg.sender_avatar || '/logo.png'} alt={msg.pet_name} />
+                        <img className="w-8 h-8 rounded-full object-cover shadow-sm mt-1" src={avatarUrl(msg.sender_avatar) || '/logo.png'} alt={msg.pet_name} loading="lazy" decoding="async" />
                       )}
                       <div className="relative">
                         {!isOwn && (
@@ -960,7 +961,7 @@ export default function CommunityPage() {
                 return (
                   <div key={msg.id || i} ref={el => { messageRefsMap.current[msg.id] = el; }} className={`flex gap-2 items-start ${isOwn ? 'justify-end ml-auto max-w-[80%]' : 'max-w-[80%]'} ${highlightMsgId === msg.id ? 'bg-primary/5 rounded-2xl' : ''}`}>
                     {!isOwn && (
-                      <img className="w-8 h-8 rounded-full object-cover shadow-sm mt-1" src={msg.sender_avatar || '/logo.png'} alt={msg.pet_name} />
+                      <img className="w-8 h-8 rounded-full object-cover shadow-sm mt-1" src={avatarUrl(msg.sender_avatar) || '/logo.png'} alt={msg.pet_name} loading="lazy" decoding="async" />
                     )}
                     <div className="relative">
                       {!isOwn && (
@@ -1160,7 +1161,7 @@ export default function CommunityPage() {
                 {announcements.map(ann => (
                   <div key={ann.id} className="bg-yellow-50/50 border border-yellow-200/60 rounded-3xl p-4 relative shadow-sm">
                     <div className="flex items-center gap-2 mb-2">
-                      <img className="w-6 h-6 rounded-full object-cover" src={ann.sender_avatar || '/logo.png'} alt={ann.username} />
+                      <img className="w-6 h-6 rounded-full object-cover" src={avatarUrl(ann.sender_avatar) || '/logo.png'} alt={ann.username} loading="lazy" decoding="async" />
                       <span className="text-[10px] font-black text-yellow-800 uppercase tracking-widest">{ann.full_name || ann.username}</span>
                       <span className="text-[8px] text-zinc-300 ml-auto">{new Date(ann.created_at).toLocaleDateString()}</span>
                     </div>
@@ -1183,7 +1184,7 @@ export default function CommunityPage() {
               <div className="grid grid-cols-3 gap-2">
                 {photos.map(p => (
                   <div key={p.id} className="aspect-square bg-zinc-100 rounded-xl overflow-hidden shadow-sm relative group cursor-pointer hover:scale-98 transition-transform">
-                    <img src={p.media_url} alt="Shared" className="w-full h-full object-cover" />
+                    <img src={thumbnailUrl(p.media_url)} alt="Shared" loading="lazy" decoding="async" className="w-full h-full object-cover" />
                   </div>
                 ))}
               </div>
@@ -1313,7 +1314,7 @@ export default function CommunityPage() {
                       onClick={() => setPreviewMember(member)}
                       className="flex items-center gap-3 text-left active:scale-[0.98] transition-transform"
                     >
-                      <img className="w-10 h-10 rounded-full object-cover" src={member.pet_avatar || '/logo.png'} alt={member.pet_name} />
+                      <img className="w-10 h-10 rounded-full object-cover" src={avatarUrl(member.pet_avatar) || '/logo.png'} alt={member.pet_name} loading="lazy" decoding="async" />
                       <div>
                         <h5 className="font-bold text-xs text-on-surface flex items-center gap-1.5">
                           <span>{member.pet_name || member.username}</span>
@@ -1352,8 +1353,10 @@ export default function CommunityPage() {
               <img
                 className="w-24 h-24 object-cover shadow-md mb-3 animate-pulse-glow hover-lift-lg"
                 style={{ clipPath: PAW_CLIP_STYLE }}
-                src={community.cover_image || '/logo.png'}
+                src={thumbnailUrl(community.cover_image) || '/logo.png'}
                 alt={community.name}
+                loading="lazy"
+                decoding="async"
               />
               <h4 className="font-black text-xl text-on-surface text-center flex items-center">
                 {community.name}
@@ -1740,8 +1743,10 @@ export default function CommunityPage() {
             </button>
 
             <img
-              src={previewMember.pet_avatar || '/logo.png'}
+              src={thumbnailUrl(previewMember.pet_avatar) || '/logo.png'}
               alt={previewMember.pet_name}
+              loading="eager"
+              decoding="async"
               className="w-24 h-24 rounded-full object-cover border-4 border-white dark:border-zinc-800 shadow-xl mx-auto animate-pulse-glow"
             />
 

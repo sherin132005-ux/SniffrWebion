@@ -14,6 +14,7 @@ import PremiumBadge from '../components/PremiumBadge';
 import usePullToRefresh from '../hooks/usePullToRefresh';
 import Portal from '../components/Portal';
 import PostVideo from '../components/PostVideo';
+import { thumbnailUrl } from '../utils/media';
 
 export function ChampionCrown({ className = "w-8 h-8" }) {
   return (
@@ -416,7 +417,9 @@ export default function ProfilePage() {
                   <img
                     alt={pet?.name}
                     className="w-36 h-36 object-cover shadow-xl relative z-10 rounded-[40%]"
-                    src={pet?.avatar_url || '/logo.png'}
+                    src={thumbnailUrl(pet?.avatar_url) || '/logo.png'}
+                    loading="eager"
+                    decoding="async"
                   />
                   {pet?.is_champion && (
                     <div className="absolute -top-6 left-1/2 -translate-x-1/2 z-20">
@@ -629,9 +632,10 @@ export default function ProfilePage() {
                   ) : (
                     <img
                       className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
-                      src={post.media_url}
+                      src={thumbnailUrl(post.media_url)}
                       alt={post.caption || 'Gallery image'}
                       loading="lazy"
+                      decoding="async"
                     />
                   )}
                   {/* Video badge -- gallery thumbnails never autoplay, this just
@@ -728,8 +732,10 @@ export default function ProfilePage() {
               {/* Centered Pet Info */}
               <div className="flex flex-col items-center space-y-3 z-10">
                 <img
-                  src={pet?.avatar_url || '/logo.png'}
+                  src={thumbnailUrl(pet?.avatar_url) || '/logo.png'}
                   alt={pet?.name}
+                  loading="eager"
+                  decoding="async"
                   className="w-28 h-28 object-cover rounded-[2rem] border-4 border-white shadow-xl"
                 />
                 <h4 className="text-xl font-black text-zinc-800 uppercase tracking-wide">
