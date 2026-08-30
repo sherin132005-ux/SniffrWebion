@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import api from '../services/api';
+import { avatarUrl } from '../utils/media';
 
 export default function ShareSheetModal({ post, onClose }) {
   const [shareSearchQuery, setShareSearchQuery] = useState('');
@@ -87,7 +88,7 @@ export default function ShareSheetModal({ post, onClose }) {
         }`}
       >
         <div className="flex items-center gap-3">
-          <img src={avatar} alt={name} className="w-10 h-10 rounded-full object-cover shadow-sm" />
+          <img src={avatarUrl(avatar)} alt={name} loading="lazy" decoding="async" className="w-10 h-10 rounded-full object-cover shadow-sm" />
           <div className="text-left">
             <h5 className="font-bold text-xs text-on-surface">{name}</h5>
             {username && <p className="text-[10px] text-zinc-400 font-bold">@{username}</p>}
@@ -179,7 +180,7 @@ export default function ShareSheetModal({ post, onClose }) {
         {selectedRecipient && (
           <div className="flex flex-wrap gap-2 max-h-24 overflow-y-auto pb-1 flex-shrink-0 mt-3">
             <div className="flex items-center gap-1.5 bg-primary/10 rounded-full pl-1 pr-2.5 py-1">
-              <img src={selectedRecipient.avatar || '/logo.png'} alt={selectedRecipient.name} className="w-6 h-6 rounded-full object-cover" />
+              <img src={avatarUrl(selectedRecipient.avatar) || '/logo.png'} alt={selectedRecipient.name} loading="lazy" decoding="async" className="w-6 h-6 rounded-full object-cover" />
               <span className="text-[10px] font-bold text-on-surface">{selectedRecipient.name}</span>
               <button
                 type="button"

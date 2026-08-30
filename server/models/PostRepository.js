@@ -15,7 +15,14 @@ class PostRepository extends BaseRepository {
 
   async getFeed(page = 1, limit = 10, userId = null) {
     const offset = (page - 1) * limit;
-    const posts = await db.all(`
+    // Over-fetch by one row to detect "is there a next page" instead of a
+    // separate SELECT COUNT(*) FROM posts -- at scale that count is a full
+    // table scan repeated on every single page request (10x more query work
+    // than the actual feed page itself), and the value was never even
+    // consumed by any caller (frontend never reads `total`). Fetching
+    // limit+1 costs nothing extra over the existing query plan and slicing
+    // the spare row off before returning gives the same hasMore signal.
+    const rows = await db.all(`
       SELECT p.*, pet.name as pet_name, pet.pet_username, pet.avatar_url as pet_avatar,
         pet.breed_name, pet.age as pet_age, pet.location_text, pet.type as pet_type, pet.id as author_pet_id,
         (SELECT COUNT(*) FROM likes WHERE post_id = p.id)::int as like_count,
@@ -39,11 +46,11 @@ class PostRepository extends BaseRepository {
       WHERE p.is_flagged = 0
       ORDER BY p.created_at DESC
       LIMIT ? OFFSET ?
-    `, [limit, offset]);
+    `, [limit + 1, offset]);
+    const hasMore = rows.length > limit;
+    const posts = hasMore ? rows.slice(0, limit) : rows;
     posts.forEach(attachPostPremium);
-    const totalRow = await db.get('SELECT COUNT(*) as count FROM posts WHERE is_flagged = 0');
-    const total = Number(totalRow.count);
-    return { posts, hasMore: offset + limit < total, total };
+    return { posts, hasMore };
   }
 
   async findById(postId, userId = null) {

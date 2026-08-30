@@ -9,6 +9,7 @@ import AdSlot from '../components/AdSlot';
 import { isPremiumGateError } from '../utils/premiumErrors';
 import { usePremium } from '../context/PremiumContext';
 import Portal from '../components/Portal';
+import { avatarUrl, thumbnailUrl } from '../utils/media';
 
 // Haversine formula to compute distance (approximate)
 function haversine(lat1, lon1, lat2, lon2) {
@@ -1122,8 +1123,10 @@ export default function MeetPage() {
                         <div className="flex items-start gap-4 mb-4">
                           <div className="relative flex-shrink-0">
                             <img
-                              src={currentPet.avatar_url || '/logo.png'}
+                              src={thumbnailUrl(currentPet.avatar_url) || '/logo.png'}
                               alt={currentPet.name}
+                              loading="eager"
+                              decoding="async"
                               className="w-28 h-28 rounded-2xl object-cover border-4 border-white dark:border-zinc-800 shadow-xl transition-transform hover:scale-105"
                               draggable="false"
                             />
@@ -1328,7 +1331,7 @@ export default function MeetPage() {
                   ) : (
                     activity.pending.map(item => (
                       <div key={item.pet_id} className="flex items-center gap-3 p-3 bg-zinc-50 dark:bg-zinc-800/40 border border-zinc-100 dark:border-zinc-800 rounded-xl">
-                        <img src={item.avatar_url || '/logo.png'} alt={item.name} className="w-11 h-11 rounded-full object-cover border border-zinc-200/50" />
+                        <img src={avatarUrl(item.avatar_url) || '/logo.png'} alt={item.name} loading="lazy" decoding="async" className="w-11 h-11 rounded-full object-cover border border-zinc-200/50" />
                         <div className="flex-1 min-w-0">
                           <h4 className="font-extrabold text-xs text-on-surface truncate">{item.name}</h4>
                           <p className="text-[10px] font-bold text-zinc-400 truncate">{item.breed_name || 'Furry Friend'} • {item.age || '1y'}</p>
@@ -1361,7 +1364,7 @@ export default function MeetPage() {
                   ) : (
                     activity.requested.map(item => (
                       <div key={item.pet_id} className="flex items-center gap-3 p-3 bg-zinc-50 dark:bg-zinc-800/40 border border-zinc-100 dark:border-zinc-800 rounded-xl">
-                        <img src={item.avatar_url || '/logo.png'} alt={item.name} className="w-11 h-11 rounded-full object-cover border border-zinc-200/50" />
+                        <img src={avatarUrl(item.avatar_url) || '/logo.png'} alt={item.name} loading="lazy" decoding="async" className="w-11 h-11 rounded-full object-cover border border-zinc-200/50" />
                         <div className="flex-1 min-w-0">
                           <h4 className="font-extrabold text-xs text-on-surface truncate">{item.name}</h4>
                           <p className="text-[10px] font-bold text-zinc-400 truncate">{item.breed_name || 'Furry Friend'} • @{item.pet_username}</p>
@@ -1422,13 +1425,13 @@ export default function MeetPage() {
                 {/* Avatars */}
                 <div className="flex items-center justify-center gap-4 relative">
                   <div className="w-20 h-20 rounded-full overflow-hidden border-[3px] border-primary shadow-lg">
-                    <img src={pet?.avatar_url || '/logo.png'} alt={pet?.name} className="w-full h-full object-cover" />
+                    <img src={thumbnailUrl(pet?.avatar_url) || '/logo.png'} alt={pet?.name} loading="eager" decoding="async" className="w-full h-full object-cover" />
                   </div>
                   <div className="w-10 h-10 rounded-full bg-gradient-to-br from-primary to-secondary flex items-center justify-center shadow-md -mx-3 z-10">
                     <span className="material-symbols-outlined text-white text-xl" style={{ fontVariationSettings: "'FILL' 1" }}>pets</span>
                   </div>
                   <div className="w-20 h-20 rounded-full overflow-hidden border-[3px] border-secondary shadow-lg">
-                    <img src={matchedPetData.avatar_url || '/logo.png'} alt={matchedPetData.name} className="w-full h-full object-cover" />
+                    <img src={thumbnailUrl(matchedPetData.avatar_url) || '/logo.png'} alt={matchedPetData.name} loading="eager" decoding="async" className="w-full h-full object-cover" />
                   </div>
                 </div>
 

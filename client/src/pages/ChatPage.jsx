@@ -16,6 +16,7 @@ import useMessageInteractions from '../hooks/useMessageInteractions';
 import TypingDots from '../components/chat/TypingDots';
 import { REACTION_EMOJIS, REACTION_LABELS } from '../constants/reactions';
 import PostVideo from '../components/PostVideo';
+import { avatarUrl, thumbnailUrl } from '../utils/media';
 
 function formatPresence(isOnline, lastActiveAt) {
   if (isOnline) return 'Active now';
@@ -112,7 +113,7 @@ function SharedPostCard({ postId, onOpenViewer }) {
           {post.media_type === 'video' ? (
             <PostVideo src={post.media_url} controls={false} fill />
           ) : (
-            <img src={post.media_url} alt="Thumbnail" className="w-full h-full object-cover" />
+            <img src={thumbnailUrl(post.media_url)} alt="Thumbnail" loading="lazy" decoding="async" className="w-full h-full object-cover" />
           )}
           <div className="absolute top-2 left-2 bg-black/40 backdrop-blur-sm text-[8px] text-white font-extrabold uppercase tracking-widest px-2.5 py-1 rounded-full flex items-center gap-1">
             <span className="material-symbols-outlined text-[9px] font-bold text-pink-400">pets</span>
@@ -123,7 +124,7 @@ function SharedPostCard({ postId, onOpenViewer }) {
 
       <div className="p-3.5 space-y-2">
         <div className="flex items-center gap-2">
-          <img src={post.pet_avatar || '/logo.png'} alt={post.pet_name} className="w-6 h-6 rounded-full object-cover border" />
+          <img src={avatarUrl(post.pet_avatar) || '/logo.png'} alt={post.pet_name} loading="lazy" decoding="async" className="w-6 h-6 rounded-full object-cover border" />
           <span className="font-black text-[11px] text-on-surface-variant tracking-tight">{post.pet_name}</span>
         </div>
         {post.caption && (
@@ -271,8 +272,10 @@ function SharedPetCard({ petId, onStartChat }) {
   return (
     <div className="w-64 max-w-full bg-gradient-to-br from-pink-50/90 via-rose-50/70 to-amber-50/90 dark:from-zinc-900 dark:via-zinc-900 dark:to-zinc-800 border border-pink-100/90 dark:border-zinc-800 rounded-[2.2rem] p-5 shadow-md hover:shadow-lg transition-all text-center flex flex-col items-center select-none">
       <img
-        src={pet.avatar_url || pet.pet_avatar || '/logo.png'}
+        src={thumbnailUrl(pet.avatar_url || pet.pet_avatar) || '/logo.png'}
         alt={displayName}
+        loading="lazy"
+        decoding="async"
         className="w-20 h-20 rounded-full object-cover border-4 border-white dark:border-zinc-800 shadow-md mb-3"
       />
 
@@ -1255,7 +1258,7 @@ const [messageReactions, setMessageReactions] = useState({});
             </button>
             
             <div className="relative cursor-pointer" onClick={() => navigate(`/profile/${activeConv.partner_pet_id}`)}>
-              <img className="w-12 h-12 rounded-full object-cover border-2 border-primary/20 hover:scale-105 transition-transform" src={activeConv.partner_avatar || '/logo.png'} alt={activeConv.partner_name} />
+              <img className="w-12 h-12 rounded-full object-cover border-2 border-primary/20 hover:scale-105 transition-transform" src={avatarUrl(activeConv.partner_avatar) || '/logo.png'} alt={activeConv.partner_name} loading="eager" decoding="async" />
               {onlineUsers.has(activeConv.partner_user_id) && (
                 <div className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-emerald-400 border-2 border-white rounded-full status-online" />
               )}
@@ -1430,7 +1433,7 @@ className="w-10 h-10 rounded-full bg-surface-container-low hover:bg-emerald-100 
                         </div>
                       </div>
                     ) : (
-                      <img src={msg.media_url} alt="Shared media" className="w-full max-w-xs object-cover rounded-xl" loading="lazy" />
+                      <img src={thumbnailUrl(msg.media_url)} alt="Shared media" className="w-full max-w-xs object-cover rounded-xl" loading="lazy" decoding="async" />
                     )}
                     {msg.content && (
                       <div className={`px-6 py-4 text-xs leading-relaxed ${isOwn ? 'bg-primary/10 text-on-surface' : 'bg-zinc-100 text-on-surface'}`}>
@@ -2027,7 +2030,7 @@ className="w-10 h-10 rounded-full bg-surface-container-low hover:bg-emerald-100 
                       onClick={() => startNewConversation(p.id)}
                       className="w-full bg-white dark:bg-zinc-950 p-4 rounded-2xl flex items-center gap-4 hover-lift border border-transparent hover:border-primary/10 transition-all text-left"
                     >
-                      <img src={p.avatar_url || '/logo.png'} className="w-12 h-12 rounded-2xl object-cover shadow-sm" alt={p.name} loading="lazy" />
+                      <img src={avatarUrl(p.avatar_url) || '/logo.png'} className="w-12 h-12 rounded-2xl object-cover shadow-sm" alt={p.name} loading="lazy" decoding="async" />
                       <div className="flex-1">
                         <p className="font-extrabold text-sm">{p.name}</p>
                         <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider mt-0.5">@{p.pet_username || p.owner_username}</p>
@@ -2081,7 +2084,7 @@ className="w-10 h-10 rounded-full bg-surface-container-low hover:bg-emerald-100 
                         )}
                         
                         <div className="relative flex-shrink-0">
-                          <img className="w-12 h-12 rounded-2xl object-cover shadow-sm" src={conv.partner_avatar || '/logo.png'} alt={conv.partner_name} loading="lazy" />
+                          <img className="w-12 h-12 rounded-2xl object-cover shadow-sm" src={avatarUrl(conv.partner_avatar) || '/logo.png'} alt={conv.partner_name} loading="lazy" decoding="async" />
                           {onlineUsers.has(conv.partner_user_id) && (
                             <div className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 bg-emerald-400 border-2 border-white rounded-full status-online" />
                           )}

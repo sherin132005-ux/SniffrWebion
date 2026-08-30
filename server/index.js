@@ -66,6 +66,11 @@ async function start() {
     })
   );
 
+  app.use((req, res, next) => {
+    console.log('[REQ]', req.method, req.url, 'origin=' + req.headers.origin);
+    next();
+  });
+
   app.use(express.json());
 
   // Static files

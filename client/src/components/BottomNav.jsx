@@ -1,5 +1,6 @@
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { avatarUrl } from '../utils/media';
 
 const tabs = [
   { path: '/home',      label: 'Home',      icon: 'home',         tip: 'Home Feed' },
@@ -63,7 +64,7 @@ export function SidebarNav() {
           <div className="flex items-center gap-3 px-3 py-2">
             <div className="w-8 h-8 rounded-full bg-primary-container flex items-center justify-center flex-shrink-0 overflow-hidden border border-primary/20">
               {pet?.avatar_url ? (
-                <img src={pet.avatar_url} alt={pet.name} className="w-full h-full object-cover" />
+                <img src={avatarUrl(pet.avatar_url)} alt={pet.name} loading="lazy" decoding="async" className="w-full h-full object-cover" />
               ) : (
                 <span className="text-primary font-bold text-xs">{user.username?.[0]?.toUpperCase()}</span>
               )}

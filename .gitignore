@@ -46,3 +46,6 @@ server/uploads/
 
 # Local storage (if used)
 server/storage/local/
+
+# Local throwaway embedded Postgres (dev-only DB, see server/scripts/local-db.js)
+server/.local-pg-data/
