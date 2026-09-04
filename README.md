@@ -144,7 +144,7 @@ GOOGLE_PLACES_API_KEY=
 
 **`client/.env`**
 ```
-VITE_API_URL=http://localhost:3001/api    # or your deployed server URL
+VITE_API_URL=http://localhost:3001    # origin only, no /api suffix -- api.js and socket.js both append paths themselves
 VITE_GOOGLE_CLIENT_ID=
 VITE_APPLE_SERVICE_ID=
 ```

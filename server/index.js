@@ -66,10 +66,15 @@ async function start() {
     })
   );
 
-  app.use((req, res, next) => {
-    console.log('[REQ]', req.method, req.url, 'origin=' + req.headers.origin);
-    next();
-  });
+  // Dev-only request log -- unconditional console.log on every single
+  // request is pure noise (and a minor perf cost) once this is deployed
+  // and getting real traffic; nothing downstream depends on it.
+  if (config.NODE_ENV !== 'production') {
+    app.use((req, res, next) => {
+      console.log('[REQ]', req.method, req.url, 'origin=' + req.headers.origin);
+      next();
+    });
+  }
 
   app.use(express.json());
 

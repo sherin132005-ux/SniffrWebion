@@ -539,6 +539,22 @@ const [messageReactions, setMessageReactions] = useState({});
       loadConversations();
     };
 
+    // Batched counterpart to onMsgUpdated -- the server sends one of
+    // these (instead of N individual 'message_updated' events) when a
+    // whole conversation's worth of messages flips to delivered/seen at
+    // once (opening a chat, joining after a reconnect). Applying all of
+    // them in a single setMessages call, and refetching the conversation
+    // list once instead of once per message, is what actually fixes the
+    // "N events -> N refetches" cost -- see server/socket/chat.js.
+    const onMsgsUpdated = ({ conversationId, messages: updatedMsgs }) => {
+      if (!updatedMsgs?.length) return;
+      if (activeConv && conversationId === activeConv.id) {
+        const byId = new Map(updatedMsgs.map(m => [m.id, m]));
+        setMessages(prev => prev.map(m => byId.has(m.id) ? byId.get(m.id) : m));
+      }
+      loadConversations();
+    };
+
     const onUserTyping = ({ conversationId, userId: typingUserId, isTyping }) => {
       if (typingUserId === user?.id) return;
       if (activeConv && conversationId === activeConv.id) {
@@ -589,6 +605,7 @@ const [messageReactions, setMessageReactions] = useState({});
     socket.on('user_offline', onUserOffline);
     socket.on('message_received', onMsg);
     socket.on('message_updated', onMsgUpdated);
+    socket.on('messages_updated', onMsgsUpdated);
     socket.on('user_typing', onUserTyping);
     socket.on('message_reaction_updated', onReactionUpdated);
     socket.on('profile_updated', onProfileUpdated);
@@ -600,6 +617,7 @@ const [messageReactions, setMessageReactions] = useState({});
       socket.off('user_offline', onUserOffline);
       socket.off('message_received', onMsg);
       socket.off('message_updated', onMsgUpdated);
+      socket.off('messages_updated', onMsgsUpdated);
       socket.off('user_typing', onUserTyping);
       socket.off('message_reaction_updated', onReactionUpdated);
       socket.off('profile_updated', onProfileUpdated);

@@ -7,13 +7,15 @@ const onlineUsers = new Map();
 const typingTimeouts = new Map();
 
 export function setupChatSocket(io) {
-  io.on('connection', async (socket) => {
+  io.on('connection', (socket) => {
     const userId = Number(socket.user.id);
 
-    // Update DB last active
-    await db.run("UPDATE users SET last_active_at = NOW() WHERE id = ?", [userId]);
-
-    // Register online
+    // Register online immediately -- listeners below must be attached
+    // synchronously, before any `await`, so a client that emits
+    // 'join_conversation'/'send_message' right after 'connect' (as
+    // ChatPage.jsx does) can never race ahead of them and get silently
+    // dropped by Socket.IO (an event with no registered listener is just
+    // discarded, not queued).
     if (!onlineUsers.has(userId)) onlineUsers.set(userId, new Set());
     onlineUsers.get(userId).add(socket.id);
     socket.broadcast.emit(
@@ -23,21 +25,6 @@ export function setupChatSocket(io) {
 socket.emit("online_users_list", {
     onlineUserIds: getOnlineUsers()
 });
-    // Sync undelivered messages on reconnect
-    const undelivered = await MessageRepo.getUndelivered(userId);
-
-for (const msg of undelivered) {
-    socket.emit('message_received', msg);
-
-    await MessageRepo.markDelivered(msg.id);
-
-    const updated = await MessageRepo.getMessageById(msg.id);
-
-    io.to(`conv_${msg.conversation_id}`).emit(
-        'message_updated',
-        updated
-    );
-}
     // Join conversation room
   socket.on('join_conversation', async ({ conversationId }) => {
   socket.join(`conv_${conversationId}`);
@@ -52,12 +39,19 @@ for (const msg of undelivered) {
   const updatedMessages =
     await MessageRepo.getSeenMessages(conversationId);
 
-  updatedMessages.forEach(msg => {
-    io.to(`conv_${conversationId}`).emit(
-      "message_updated",
-      msg
-    );
-  });
+  // One batched event for the whole conversation instead of one
+  // 'message_updated' per message -- opening a conversation with N
+  // unseen messages used to fire N separate socket events, and the
+  // client's handler ran a full conversations-list refetch on EACH one
+  // (see ChatPage.jsx), turning "open a chat with 30 unread messages"
+  // into 30 redundant API calls. A single array event fixes that at
+  // the source.
+  if (updatedMessages.length) {
+    io.to(`conv_${conversationId}`).emit('messages_updated', {
+      conversationId,
+      messages: updatedMessages
+    });
+  }
 });
 
     socket.on('leave_conversation', ({ conversationId }) => {
@@ -141,12 +135,19 @@ io.to(`conv_${conversationId}`).emit(
   const updatedMessages =
     await MessageRepo.getSeenMessages(conversationId);
 
-  updatedMessages.forEach(msg => {
-    io.to(`conv_${conversationId}`).emit(
-      "message_updated",
-      msg
-    );
-  });
+  // One batched event for the whole conversation instead of one
+  // 'message_updated' per message -- opening a conversation with N
+  // unseen messages used to fire N separate socket events, and the
+  // client's handler ran a full conversations-list refetch on EACH one
+  // (see ChatPage.jsx), turning "open a chat with 30 unread messages"
+  // into 30 redundant API calls. A single array event fixes that at
+  // the source.
+  if (updatedMessages.length) {
+    io.to(`conv_${conversationId}`).emit('messages_updated', {
+      conversationId,
+      messages: updatedMessages
+    });
+  }
 });
 
     // ── Message reactions ────────────────────────────────────────
@@ -183,6 +184,26 @@ io.to(`conv_${conversationId}`).emit(
         io.to(`conv_${updated.conversation_id}`).emit('message_updated', updated);
       }
     });
+
+    // Deferred initialization -- runs after every listener above is
+    // already attached, so it can safely `await` without risking a race
+    // against early client emits (see comment at the top of this handler).
+    (async () => {
+      try {
+        await db.run("UPDATE users SET last_active_at = NOW() WHERE id = ?", [userId]);
+
+        // Sync undelivered messages on reconnect
+        const undelivered = await MessageRepo.getUndelivered(userId);
+        for (const msg of undelivered) {
+          socket.emit('message_received', msg);
+          await MessageRepo.markDelivered(msg.id);
+          const updated = await MessageRepo.getMessageById(msg.id);
+          io.to(`conv_${msg.conversation_id}`).emit('message_updated', updated);
+        }
+      } catch (err) {
+        console.error('[chat connection init error]', err.message);
+      }
+    })();
 
     // Disconnect
 socket.on('disconnect', async () => {

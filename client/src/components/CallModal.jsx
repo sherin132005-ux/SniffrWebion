@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useSocket } from '../context/SocketContext';
+import { usePermissions } from '../context/PermissionContext';
 import api from '../services/api';
 
 export default function CallModal({
@@ -18,8 +19,14 @@ export default function CallModal({
   // the full reasoning; same class of bug, fixed the same way here for
   // consistency and to survive a reconnect mid-call.
   const { socket } = useSocket();
+  const { requestFeaturePermission } = usePermissions();
 
   const [status, setStatus] = useState(isIncoming ? 'ringing' : 'dialing'); // dialing | ringing | connected | ended
+  // Set when the user (or the OS) denies mic/camera access -- distinct from
+  // 'ended' so the UI can show *why* the call didn't go through instead of
+  // just "Call ended", and distinct from connectionLost (a network issue,
+  // not a permissions one).
+  const [permissionDenied, setPermissionDenied] = useState(null); // null | 'microphone' | 'camera'
   const [duration, setDuration] = useState(0);
   const [micOn, setMicOn] = useState(true);
   const [camOn, setCamOn] = useState(type === 'video');
@@ -203,6 +210,16 @@ export default function CallModal({
     };
   }, [socket, isIncoming, toUserId]);
 
+  // A denied mic/camera permission ends the call the same way a normal
+  // hang-up does, just with a brief "why" shown first (see permissionDenied
+  // state) instead of leaving a track-less call sitting in 'connected'.
+  useEffect(() => {
+    if (!permissionDenied) return;
+    const t = setTimeout(() => handleEnd(), 1800);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [permissionDenied]);
+
   // Handle Call connected duration timer
   useEffect(() => {
     if (status === 'connected') {
@@ -267,9 +284,30 @@ export default function CallModal({
     return () => clearInterval(interval);
   }, [debugEnabled, status, type]);
 
-  // Acquire local media streams
+  // Acquire local media streams. Goes through the same feature-permission
+  // flow as every other capability in the app (see PermissionContext) --
+  // previously this called getUserMedia directly, which still triggers the
+  // OS/browser's native prompt, but silently produced a "connected" call
+  // with zero local tracks on denial (see the "No local media stream
+  // available" log below) instead of telling the user why or ending the
+  // call. A denial here now surfaces as a real UI state (permissionDenied)
+  // and ends the call, rather than leaving both sides staring at a
+  // "connected" call that never had audio.
   const acquireLocalMedia = async () => {
     try {
+      const micGranted = await requestFeaturePermission('microphone', type === 'video' ? 'videoCall' : 'audioCall');
+      if (!micGranted) {
+        setPermissionDenied('microphone');
+        return null;
+      }
+      if (type === 'video') {
+        const camGranted = await requestFeaturePermission('camera', 'videoCall');
+        if (!camGranted) {
+          setPermissionDenied('camera');
+          return null;
+        }
+      }
+
       const constraints = {
         audio: true,
         video: type === 'video' ? { width: 320, height: 240 } : false
@@ -283,6 +321,12 @@ export default function CallModal({
       return stream;
     } catch (err) {
       console.error('[Call] Error acquiring media streams:', err);
+      // getUserMedia can still fail/be denied here even after the
+      // permission-service check above resolved 'granted' (e.g. the OS
+      // prompt itself was dismissed at the native level, or no physical
+      // device is present) -- still worth surfacing as a real UI state
+      // rather than a silently track-less "connected" call.
+      setPermissionDenied(type === 'video' ? 'camera' : 'microphone');
       return null;
     }
   };
@@ -693,13 +737,15 @@ export default function CallModal({
               <p className="text-xs font-bold text-pink-300 drop-shadow-sm">{cleanUsername}</p>
             )}
             <p className={`text-xs font-bold tracking-widest uppercase pt-1 ${
+              permissionDenied ? 'text-rose-400' :
               connectionLost ? 'text-rose-400' :
               reconnecting ? 'text-amber-400 animate-pulse' :
               status === 'ringing' || status === 'dialing' ? 'text-white/80 animate-pulse' :
               status === 'connected' ? 'text-emerald-400 font-bold' :
               'text-rose-400'
             }`}>
-              {connectionLost ? '🐾 Connection lost' :
+              {permissionDenied ? `🐾 ${permissionDenied === 'camera' ? 'Camera' : 'Microphone'} access denied` :
+               connectionLost ? '🐾 Connection lost' :
                reconnecting ? 'Reconnecting...' :
                status === 'dialing' ? 'Connecting...' :
                status === 'ringing' ? 'Ringing...' :
@@ -815,13 +861,15 @@ export default function CallModal({
                 <p className="text-xs font-bold text-pink-300">{cleanUsername}</p>
               )}
               <p className={`text-xs font-bold tracking-widest uppercase pt-1 ${
+                permissionDenied ? 'text-rose-400' :
                 connectionLost ? 'text-rose-400' :
                 reconnecting ? 'text-amber-400 animate-pulse' :
                 status === 'ringing' || status === 'dialing' ? 'text-white/70 animate-pulse' :
                 status === 'connected' ? 'text-emerald-400 font-bold' :
                 'text-rose-400'
               }`}>
-                {connectionLost ? '🐾 Connection lost' :
+                {permissionDenied ? `🐾 ${permissionDenied === 'camera' ? 'Camera' : 'Microphone'} access denied` :
+                 connectionLost ? '🐾 Connection lost' :
                  reconnecting ? 'Reconnecting...' :
                  status === 'dialing' ? 'Connecting...' :
                  status === 'ringing' ? 'Ringing...' :
